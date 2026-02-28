@@ -146,7 +146,9 @@ class URLVerificationDialog(tk.Toplevel):
         self.set_busy(True)
         def run():
             is_ok = self.url_manager.is_url_reachable(url)
-            self.after(0, lambda: self.show_test_result(is_ok, auto))
+            # Utiliser winfo_exists() pour vérifier que le widget existe encore
+            if self.winfo_exists():
+                self.after(0, lambda: self.show_test_result(is_ok, auto))
         threading.Thread(target=run, daemon=True).start()
 
     def show_test_result(self, is_ok, auto):
@@ -168,7 +170,9 @@ class URLVerificationDialog(tk.Toplevel):
         
         def run():
             found = self.url_manager.search_url_for_domain(domain, self.performer_name)
-            self.after(0, lambda: self.show_search_result(found))
+            # Utiliser winfo_exists() pour vérifier que le widget existe encore
+            if self.winfo_exists():
+                self.after(0, lambda: self.show_search_result(found))
             
         threading.Thread(target=run, daemon=True).start()
 
@@ -234,7 +238,9 @@ class URLVerificationDialog(tk.Toplevel):
             final_list.extend(final_others)
             
             self.final_urls = final_list[:50]
-            self.after(0, self.destroy)
+            # Utiliser winfo_exists() pour vérifier que le widget existe encore
+            if self.winfo_exists():
+                self.after(0, self.destroy)
             
         threading.Thread(target=run, daemon=True).start()
 

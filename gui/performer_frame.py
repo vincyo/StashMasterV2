@@ -101,8 +101,9 @@ class PerformerFrame(ttk.Frame):
         self._setup_ttk_styles()
         self._create_widgets()
         
+        # Différer le chargement pour que la mainloop soit démarrée
         if performer_id:
-            self._load_from_stash()
+            self.after(100, self._load_from_stash)
 
     def _setup_ttk_styles(self):
         style = ttk.Style()
