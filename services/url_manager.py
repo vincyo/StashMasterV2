@@ -190,35 +190,35 @@ class URLManager:
                 "Connection": "keep-alive",
             }
             
-            # IAFD bloque souvent HEAD, on utilise directement GET pour IAFD
             domain_key = self.get_domain_key(url)
+            
+            # IAFD bloque les bots (Cloudflare) → on accepte 403 si l'URL correspond au pattern
             if domain_key == "iafd.com":
+                if self.is_profile_url(url, domain_key):
+                    # URL IAFD valide par structure → on l'accepte même si 403
+                    print(f"[URLManager] IAFD accepté par pattern : {url}")
+                    return True
+                # Si ce n'est pas un profil, on teste quand même
                 resp = requests.get(url, headers=headers, timeout=10, stream=True, allow_redirects=True)
                 resp.close()
-                print(f"[URLManager] IAFD GET → {resp.status_code} pour {url}")
-                return resp.status_code == 200
+                print(f"[URLManager] IAFD GET → {resp.status_code}")
+                # Accepter 200 ou 403 (403 = Cloudflare mais page existe)
+                return resp.status_code in (200, 403)
             
             # Pour les autres : HEAD puis GET en fallback
-            # Timeout augmenté à 10s (certains sites peuvent être lents)
             resp = requests.head(url, headers=headers, timeout=10, allow_redirects=True)
             
-            # Quand allow_redirects=True, requests suit les redirections automatiquement
-            # donc on reçoit le code final (200 si succès)
             if resp.status_code == 200:
                 return True
                 
             # Si HEAD échoue (405, 403, 404), fallback sur GET
             if resp.status_code in (405, 403, 404):
-                print(f"[URLManager] HEAD → {resp.status_code}, tentative GET pour {url}")
                 resp = requests.get(url, headers=headers, timeout=10, stream=True, allow_redirects=True)
                 resp.close()
-                print(f"[URLManager] GET → {resp.status_code}")
                 return resp.status_code == 200
                 
-            print(f"[URLManager] Code inattendu {resp.status_code} pour {url}")
             return False
         except Exception as e:
-            # Debug : afficher l'erreur pour comprendre le problème
             print(f"[URLManager] Erreur vérification {url}: {type(e).__name__}: {e}")
             return False
 
