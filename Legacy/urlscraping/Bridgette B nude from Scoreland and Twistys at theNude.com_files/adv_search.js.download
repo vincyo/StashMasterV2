@@ -1,0 +1,77 @@
+search_visible = false;
+
+$(".navbar-search-term").focusin(function() {
+    if(search_visible) return;
+    search_visible = true;
+    $(".search-wrapper").slideToggle(500);
+    $('body').addClass('is-search-open');
+});
+$('.search-wrapper').on('click', '.navbar-close button', function(e) {
+    e.preventDefault();
+    $(".search-wrapper").slideUp();
+    search_visible = false;
+});
+
+//$("#srch-term").focusout(function() {
+//    $(".search-wrapper").slideToggle(500);
+//});
+
+function is_descendant_of_any(elem, elements) {
+    for(var i in elements) {
+        if(is_descendant_of(elem, elements[i])) return(true);
+    }
+    return(false);
+}
+
+function is_descendant_of(elem, ancestor) {
+    var elem = { 'parentNode': elem };
+
+    while( elem = elem.parentNode ) {
+        if(elem === ancestor) {
+            return(true);
+        }
+    }
+
+    return(false);
+}
+
+$("body").on('click', function(event) {
+    if(!search_visible) return(true);
+    // get x,y and check if it's in search box or adv search div
+    var srch_terms = $(".navbar-search-term");
+    var adv_search = $("#search-wrapper");
+    var target = $(event.target);
+
+    if( is_descendant_of(event.target, adv_search.get(0)) || is_descendant_of_any(event.target, srch_terms.toArray())) {
+        return(true);
+    }
+
+    $(".search-wrapper").slideToggle(500);
+    $('body').removeClass('is-search-open');
+    search_visible = false;
+
+    return(true);
+});
+
+$(function() {
+    $.get('/index.php?page=search&action=index&isAjax=2', function(response) {
+        $("#search-wrapper").html(response);
+        initSearchForm();
+        /* Todo: Remove this once navbar is replaced with suggestions */
+        /* Basically copy of search.js, but limited on navbar-search */
+        $("#search-wrapper").find(".search-model-btn-more-options").on('click', function(event) {
+            event.preventDefault();
+
+            /* Make sure to operate only on searchForm - the form that contains event target */
+            var searchForm = $(this).closest("form");
+
+            searchForm.find(".advanced-search-fields").toggle();
+            var btn = searchForm.find(".search-model-btn-more-options");
+            if($(".advanced-search-fields").is(":visible")) {
+                btn.attr("value", btn.data("text-on"));
+            } else {
+                btn.attr("value", btn.data("text-off"));
+            }
+        });
+    });
+});

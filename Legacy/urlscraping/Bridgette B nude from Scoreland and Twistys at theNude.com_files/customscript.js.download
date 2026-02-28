@@ -1,0 +1,103 @@
+$.fn.popover.Constructor.prototype.getCalculatedOffset = function (placement, pos, actualWidth, actualHeight) {
+    return placement == 'bottom' ? { top: pos.top + pos.height + 20,   left: pos.left + pos.width / 2 - actualWidth / 2 } :
+           placement == 'top'    ? { top: pos.top - actualHeight, left: pos.left + pos.width / 2 - actualWidth / 2 } :
+           placement == 'left'   ? { top: pos.top + pos.height / 2 - actualHeight / 2, left: pos.left - actualWidth } :
+        /* placement == 'right' */ { top: pos.top + pos.height / 2 - actualHeight / 2, left: pos.left + pos.width }
+
+  };
+
+
+$(document).ready(function() {
+$(function() {
+    $('body').popover({
+        html: true,
+        trigger: 'hover',
+        placement: 'bottom',
+        selector: 'a[rel="popover"]',
+        container: 'body',
+          content: function() {
+              return '<img src="' + $(this).data('img') + '" width="' + $(this).data('img-width') + '" height="' + $(this).data('img-height') + '" />'; }
+    });
+
+  $('#login-popover').popover({
+      html : true,
+      title: function() {
+        return $("#popover-head").html();
+      },
+      content: function() {
+        return $("#popover-content").html();
+      },
+      trigger: 'click',
+          placement: 'bottom'
+  });
+
+});
+
+    $('.abc-trigger').on('click', function(e) {
+        e.preventDefault();
+        var submenu = this.getAttribute("data-trigger-for");
+        // hide all submenus except current one
+        $(".abc:not(#" + submenu + ")").hide();
+
+        // toggle current one
+        $('#' + submenu).toggle();
+    });
+});
+
+
+
+// Validation of the 3 fields Date of birth in Search
+
+function dateChecker()
+            {
+            var dayValidate = "([1-9]|[12]\d|3[01])";
+            var monthValidate = "^(0?[1-9]|1[012])$";
+            var yearValidate = "/^(19[5-9]d|20[0-4]d|2050)$/";
+            var days = document.getElementById('dob_day').value;
+            var months = document.getElementById('dob_month').value;
+            var years = document.getElementById('dob_year').value;
+
+            if (!days.match(dayValidate))
+            {
+                alert("Please, Enter Days  between 1 to 31 ");
+                document.searchmodelform.dob_day.focus();
+                return false;
+            }
+
+            if (!months.match(monthValidate))
+            {
+                alert("Please, Enter Months in between 1 to 12 ");
+                document.searchmodelform.dob_month.focus();
+                return false;
+            }
+
+            if (!(+years >= 1900 && +years <= 2016))
+            {
+                alert("Please, Enter Years in between 1900 to 2016 ");
+                document.searchmodelform.dob_year.focus();
+                return false;
+            }
+
+        }
+
+
+
+
+// Scroll tabs to position
+
+$(document).ready(function(){
+    // bind and scroll header div
+    $(window).bind('resize', function(e){
+        $(".floating-section").css('width',$(".nav-tabs-responsive" ).width());
+    });
+    $(window).on("scroll", function() {
+        $(".floating-section").css('width',$(".nav-tabs-responsive" ).width());
+    });
+});
+
+// Scroll tabs to position
+
+$('.history-btn').on('click', function(){
+    $('#view-history').toggleClass('open');
+
+})

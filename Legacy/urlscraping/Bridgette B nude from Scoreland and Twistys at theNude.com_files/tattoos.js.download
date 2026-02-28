@@ -1,0 +1,139 @@
+(function($) {
+    /* addClass shim
+     ****************************************************/
+    var addClass = $.fn.addClass;
+    $.fn.addClass = function(value) {
+        var orig = addClass.apply(this, arguments);
+
+        var elem,
+                i = 0,
+                len = this.length;
+
+        for (; i < len; i++) {
+            elem = this[ i ];
+            if (elem instanceof SVGElement) {
+                var classes = $(elem).attr('class');
+                if (classes) {
+                    var index = classes.indexOf(value);
+                    if (index === -1) {
+                        classes = classes + " " + value;
+                        $(elem).attr('class', classes);
+                    }
+                } else {
+                    $(elem).attr('class', value);
+                }
+            }
+        }
+        return orig;
+    };
+
+    /* removeClass shim
+     ****************************************************/
+    var removeClass = $.fn.removeClass;
+    $.fn.removeClass = function(value) {
+        var orig = removeClass.apply(this, arguments);
+
+        var elem,
+                i = 0,
+                len = this.length;
+
+        for (; i < len; i++) {
+            elem = this[ i ];
+            if (elem instanceof SVGElement) {
+                var classes = $(elem).attr('class');
+                if (classes) {
+                    var index = classes.indexOf(value);
+                    if (index !== -1) {
+                        classes = classes.substring(0, index) + classes.substring((index + value.length), classes.length);
+                        $(elem).attr('class', classes);
+                    }
+                }
+            }
+        }
+        return orig;
+    };
+
+    /* hasClass shim
+     ****************************************************/
+    var hasClass = $.fn.hasClass;
+    $.fn.hasClass = function(value) {
+        var orig = hasClass.apply(this, arguments);
+
+        var elem,
+                i = 0,
+                len = this.length;
+
+        for (; i < len; i++) {
+            elem = this[ i ];
+            if (elem instanceof SVGElement) {
+                var classes = $(elem).attr('class');
+
+                if (classes) {
+                    if (classes.indexOf(value) === -1) {
+                        return false;
+                    } else {
+                        return true;
+                    }
+                } else {
+                    return false;
+                }
+            }
+        }
+        return orig;
+    };
+})(jQuery);
+
+$(document).ready(function()
+{
+    $(".body-image .body-parts a").on("click", function(e) {
+        e.preventDefault();
+        var $aInputTattoo = [];
+        var tattooDescription = [];
+        if ($(this).hasClass('active') === false) {
+            $(this).attr("class", "active");
+        } else {
+            $(this).attr("class", "");
+        };
+        // Add the id to the search input
+        $(".body-image .body-parts a.active").each(function(index, element) {
+            if($(this).attr("data-searchid") !== ''){
+                $aInputTattoo.push($(this).attr("data-searchid"));
+                tattooDescription.push($(this).attr("data-tooltip"));
+            }
+        });
+        $('#selected_tattoos').val($aInputTattoo.join());
+        $('#list').html(tattooDescription.length ? "<span>" + tattooDescription.join("</span> <span>") + "</span>" : "");
+        /*if($('#selected_tattoos').val() !== ''){
+            $('.search-btn').fadeIn('normal');
+        } else {
+            $('.search-btn').fadeOut('normal');
+        }*/       
+    });
+    
+    $(".body-image .body-parts a").on('mouseover', function(event) {
+        $('body').append('<div class="body-tooltip"><div class="tipBody"></div></div>'); 
+        $sTip = $(this).attr('data-tooltip');
+        $('.body-tooltip').fadeTo(300, 0.9).children('.tipBody').html($sTip);
+    }).mousemove(function(e) {
+        $('.body-tooltip').css('top', e.pageY + 10 );
+        $('.body-tooltip').css('left', e.pageX + 20 );
+    }).mouseout(function(e) {
+        $('.body-tooltip').hide();
+        $('.body-tooltip').remove();
+    });
+});
+
+$(function() {
+    $("#tattoos").on('show.bs.collapse', function() {
+        var btn = $("#btn-tattoos");
+        btn.text(btn.attr('data-title-shown'));
+    });
+    
+    $("#tattoos").on('hide.bs.collapse', function() {
+        var btn = $("#btn-tattoos");
+        btn.text(btn.attr('data-title-collapsed'));
+        
+        // scroll to the top of the model tab
+        location.hash = "#main-container";
+    });
+});

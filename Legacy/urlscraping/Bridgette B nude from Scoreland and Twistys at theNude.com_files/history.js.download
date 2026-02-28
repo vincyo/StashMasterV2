@@ -1,0 +1,107 @@
+// ================ History 
+$(function() {
+    /* Flag to denote tab switch on history 'Back'. In this case we want
+     * to prevent history.pushState() executed after tab is shown.
+     * @type Boolean
+     */
+    var triggeredByHistory = false;
+    
+    var defaultTab = null;
+    if(!window.location.hash) {
+        var activeTabs = $(".active.tab-pane");
+        /* The tab we want will be always last. On model / photographer pages
+         * it will be after advanched search form. On search page it will be
+         * the only tab
+         */
+        if(activeTabs.length > 0) {
+            var activeTab = activeTabs.last();
+            defaultTab = activeTab.attr("id");
+        }
+    }
+        
+    $("a[data-toggle='tab']").on('shown.bs.tab', function(e) {
+        if(!triggeredByHistory) {
+            history.pushState({}, '', e.target.href);
+        }
+        triggeredByHistory = false;
+    });
+    
+    $(window).on('hashchange', function(e) {
+//        console.log("hashchange, hash: " + window.location.hash);
+        if(window.location.hash) {
+            triggeredByHistory = true;
+            $('.nav a[href="' + window.location.hash + '"]').tab('show');
+            triggeredByHistory = false;
+        } else {
+//            console.log("Switching to default tab: " + defaultTab);
+            /* switch to first tab */
+            triggeredByHistory = true;
+            $('.nav a[href^="#' + defaultTab + '"]').tab('show');
+            triggeredByHistory = false;
+        }
+    });
+});
+
+$(function() {
+    
+    $(window).bind('popstate', function(event) {
+        event = event.originalEvent;
+        console.log("location: " + document.location);
+        console.log(event);
+        
+        if(event.state && event.state.type && event.state.type === 'ajax') {
+            /* Unfortunately this doesn't work for the initial content,
+             * for example on Model Page we go to Covers which shows page 1,
+             * we switch to page two, then three. Clicking 'Back' loads
+             * page two, clicking 'Back' again fails to load page 1 since its
+             * envent.state.response isn't set (and even envet.state is empty)
+             */
+            $(event.state.target_selector).html(event.state.response);
+        } else if(event.state && event.state.type && event.state.type === 'ajax_pre') {
+            $(event.state.target_selector).html(event.state.response);
+        }
+        
+        return;
+    });
+    
+    /*$(window).bind('popstate', function(e) {
+        return;
+        e = e.originalEvent;
+       // initial page load
+       if(!e.state) {
+           if(window.location.hash !== '') {
+               //alert("hash: " + window.location.hash);
+               var hash = window.location.hash.substring(1);
+               // check if it is a tab
+               if($("#tab" + hash).size() > 0) {
+                   // it's a tab
+                   history.replaceState({type: 'tab', 'tab_id': hash}, '', window.location.href);
+                   return;
+               }
+           }
+           // regular
+           //alert("regular");
+           history.replaceState({type: 'regular', 'url': window.location.href }, '', window.location);
+           return;
+       }
+       
+       switch(e.state['type']) {
+           case 'regular':
+               //alert("regular");
+               if(window.location.href === e.state['url']) {
+                   window.location.href = e.state['url'];
+                   window.location.reload();
+               } else window.location.href = e.state['url'];
+               break;
+           case 'ajax':
+               $(e.state.target_selector).html(e.state.response);
+               break;
+           case 'tab':
+               //alert("Switching to: " + e.state['tab_id']);
+               dd_tabs(e.state['tab_id'], true);
+               break;
+           default:
+               alert("Error. Unknown history type: `" + e.state['type'] + "`");
+       }
+    });*/
+});

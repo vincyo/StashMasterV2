@@ -1,0 +1,358 @@
+/**
+ * Needed
+ */
+
+/**
+ * Assumes that reCaptcha has been already loaded
+ * @returns {undefined}
+ */
+function recaptcha_render() {
+    var recaptchas = document.querySelectorAll('div[class=g-recaptcha]');
+    for( i = 0; i < recaptchas.length; i++) {
+        grecaptcha.render( recaptchas[i], {
+            'sitekey' : '6LcPVf0UAAAAAP8qctvvHvt7sXgP4wNymgfBo0O0'
+        });
+    }
+}
+
+function dd_ajax_load_html(form_or_url, extractSelector , targetSelector, newLocation, scrollTo) {
+    if(typeof form_or_url !== 'string' && !(form_or_url instanceof String)) {
+        var obj = $(form_or_url);
+        if(obj.is("a")) {
+            form_or_url = obj.attr("href");
+        } else {
+            // assume it's a form
+            var url = obj.attr('action');
+            form_or_url = url + "?" + obj.serialize();
+        }
+    }
+
+    if( targetSelector === undefined) targetSelector = extractSelector;
+
+    //if(!newLocation) newLocation = window.location;
+    if(!newLocation) newLocation = form_or_url;
+    // Scroll
+    if(scrollTo) {
+        var mainNavBarHeight = $("#main-navbar").outerHeight();
+        var modelNavBar = $("#model-navbar");
+        if(modelNavBar.length > 0) {
+            mainNavBarHeight += modelNavBar.outerHeight(false);
+        }
+        $('html,body').animate( { scrollTop: $(scrollTo).offset().top - mainNavBarHeight }, 'slow');
+    }
+
+    $.get(form_or_url, {}, function(response) {
+        var content = $(response).find(extractSelector).html();
+        var previousContent = $(targetSelector).html();
+        $(targetSelector).html(content);
+        // handle history
+        if(history.pushState) {
+            /* extend current state with 'response' so that we can go back from
+             * page two to page 1
+             */
+            var currentState = window.history.state || {};
+            var updatedState = {type: 'ajax_pre', extract_selector: extractSelector, target_selector: targetSelector, url: form_or_url, 'response': previousContent};
+
+            var state = {type: 'ajax', extract_selector: extractSelector, target_selector: targetSelector, url: form_or_url, 'response': content};
+            history.pushState( state, '', newLocation);
+        }
+    }, 'html');
+    return(false);
+}
+
+
+/**
+ * Not needed?
+ */
+function dd_debug() {
+    if(window.location.href.indexOf("dd_debug") != -1) return(true);
+    return(false);
+}
+/*
+ * ============ hover =============
+ */
+
+// ============== AJAX
+// ============== BEG SOCIAL SHARES =================
+function share_fb($url) {
+    window.open($url, 'facebook-share-dialog', 'width=626,height=436');
+    return(false);
+}
+// ============== END SOCIAL SHARES =================
+
+/*
+ * On ready scripts
+ */
+
+/* This Chosen snippet must run before on load scripts for isMobiel to be available */
+// Chosen Select
+!function(a){var b=/iPhone/i,c=/iPod/i,d=/iPad/i,e=/(?=.*\bAndroid\b)(?=.*\bMobile\b)/i,f=/Android/i,g=/(?=.*\bAndroid\b)(?=.*\bSD4930UR\b)/i,h=/(?=.*\bAndroid\b)(?=.*\b(?:KFOT|KFTT|KFJWI|KFJWA|KFSOWI|KFTHWI|KFTHWA|KFAPWI|KFAPWA|KFARWI|KFASWI|KFSAWI|KFSAWA)\b)/i,i=/IEMobile/i,j=/(?=.*\bWindows\b)(?=.*\bARM\b)/i,k=/BlackBerry/i,l=/BB10/i,m=/Opera Mini/i,n=/(CriOS|Chrome)(?=.*\bMobile\b)/i,o=/(?=.*\bFirefox\b)(?=.*\bMobile\b)/i,p=new RegExp("(?:Nexus 7|BNTV250|Kindle Fire|Silk|GT-P1000)","i"),q=function(a,b){return a.test(b)},r=function(a){var r=a||navigator.userAgent,s=r.split("[FBAN");return"undefined"!=typeof s[1]&&(r=s[0]),s=r.split("Twitter"),"undefined"!=typeof s[1]&&(r=s[0]),this.apple={phone:q(b,r),ipod:q(c,r),tablet:!q(b,r)&&q(d,r),device:q(b,r)||q(c,r)||q(d,r)},this.amazon={phone:q(g,r),tablet:!q(g,r)&&q(h,r),device:q(g,r)||q(h,r)},this.android={phone:q(g,r)||q(e,r),tablet:!q(g,r)&&!q(e,r)&&(q(h,r)||q(f,r)),device:q(g,r)||q(h,r)||q(e,r)||q(f,r)},this.windows={phone:q(i,r),tablet:q(j,r),device:q(i,r)||q(j,r)},this.other={blackberry:q(k,r),blackberry10:q(l,r),opera:q(m,r),firefox:q(o,r),chrome:q(n,r),device:q(k,r)||q(l,r)||q(m,r)||q(o,r)||q(n,r)},this.seven_inch=q(p,r),this.any=this.apple.device||this.android.device||this.windows.device||this.other.device||this.seven_inch,this.phone=this.apple.phone||this.android.phone||this.windows.phone,this.tablet=this.apple.tablet||this.android.tablet||this.windows.tablet,"undefined"==typeof window?this:void 0},s=function(){var a=new r;return a.Class=r,a};"undefined"!=typeof module&&module.exports&&"undefined"==typeof window?module.exports=r:"undefined"!=typeof module&&module.exports&&"undefined"!=typeof window?module.exports=s():"function"==typeof define&&define.amd?define("isMobile",[],a.isMobile=s()):a.isMobile=s()}(this);
+
+// force confirmation message on delete post button
+$(document).ready(function() {
+    $('a[data-button-type=delete]').click(function(e) {
+        return(confirm("Confirm deletion operation"));
+    });
+    $("#main-navbar .dropdown").on('show.bs.dropdown', function() {
+        $(this).closest('.wrapper-collapse').addClass('is-collapsed');
+    });
+    $("#main-navbar .dropdown").on('hidden.bs.dropdown', function() {
+        $(this).closest('.wrapper-collapse').removeClass('is-collapsed');
+    });
+    
+});
+
+function searchChosen() {
+    if (isMobile.any !== true) {
+        $(".chosen-select").chosen(
+            {
+                width: "100%",
+                hide_results_on_select: false
+            }
+        );
+    }
+}
+
+// every bottom pagignation link should scroll user browser top
+/*$(function() {
+  $('.pagination:even a').click(function(){
+     $(this).prev(".pagination").first().scrollTop();
+  });
+});*/
+
+function google_analytics_loaded() {
+  if (window._gaq && window._gaq._getTracker) {
+    return(true);
+  } else return(false);
+}
+
+// outgoing links tracking
+$(function() {
+    $(".tnap_out_link").click(function(event) {
+        if(this.getAttribute("data-outgoing-link-processed")) {
+            return(true);
+        }
+        
+        var url = this.getAttribute("href");
+        var rect = this.getBoundingClientRect();
+        var x = rect.left + window.scrollX;
+        var y = rect.top + window.scrollY;
+
+        this.setAttribute("data-outgoing-link-processed", "true");
+
+        var vx = window.innerWidth;
+        var vy = window.innerHeight;
+        
+        /* Register the click and follow the url afterwards */
+        var data = {
+            "out_url": url,
+            "x": x,
+            "y": y,
+            "vx": vx,
+            "vy": vy
+        };
+        if(this.hasAttribute("data-link_class")) data["link_class"] = this.getAttribute("data-link_class");
+        
+        /* Fire & forget, we don't really need to handle the response */
+        $.post({
+            "url": "index.php?page=tnap&action=registerOutgoingLink",
+            "data": data,
+            "timeout": 5 * 1000
+        });
+
+        return(true);
+    });
+});
+
+
+function initSearchForm() {
+    searchChosen();
+    /* Attach event handler to prevent overlaping of any/all button with other options */
+    enhanceSearchForm();
+    /* Handle advanced search form unfolding based on user preferences */
+    if(isShowMoreSearchOptionsSettingEnabled()) {
+        /* Make sure 'More Search Options' is unfolded */
+        /* Handle only fields in .search-wrapper, fields on advanced search page itself are handled from theme code */
+        var searchForms = document.querySelectorAll(".search-wrapper  form[name='model_search']");
+        searchForms.forEach(toggleShowMoreSearchOptions);
+    }
+}
+/**
+ * Adds various features to our search form. Currently:
+ * - adds Any/All button overlapping protection
+ */
+function enhanceSearchForm() {
+
+    function shareVertical(rect1, rect2) {
+        var topInTheMiddle = (rect1.top >= rect2.top) && ( rect1.top <= rect2.bottom);
+        var bottomInTheMiddle = (rect1.bottom >= rect2.top ) && (rect1.bottom <= rect2.bottom);
+        var shareVertical = topInTheMiddle || bottomInTheMiddle;
+        return shareVertical;
+    }
+
+    function shareHorizontal(rect1, rect2) {
+        var leftInTheMiddle = (rect1.left >= rect2.left) && ( rect1.left <= rect2.right);
+        var rightInTheMiddle = (rect1.right >= rect2.left) && (rect1.right <= rect2.right);
+        var shareHorizontal = leftInTheMiddle || rightInTheMiddle;
+        return shareHorizontal;
+    }
+
+    function rectanglesOverlap(rect1, rect2) {
+        var vertical = shareVertical(rect1, rect2);
+        var horizontal = shareHorizontal(rect1, rect2);
+        return horizontal && vertical;
+    }
+
+    $(".search_and_or").siblings("select[multiple]").chosen().change(function () {
+        var selectID = this.id;
+        var chosenWidgetID = selectID + "_chosen";
+        var chosenWidget = $("#" + chosenWidgetID).get(0);
+        if(!chosenWidget) {
+            console.log("Error, couldn't find #" + chosenWidgetID);
+            return;
+        }
+        var theButton = $(chosenWidget).find("~.search_and_or").get(0);
+        if(!theButton) {
+            console.log("Error, Couldn't find .search_and_or button");
+            return;
+        }
+        /* Remove the invisible element if it exists */
+        $(chosenWidget).find(".any-all-button-protector").remove();
+        /* Scan through all the options and find the first one that overlaps with any/all button */
+        var overlappingOption = null;
+        var theButtonRect = theButton.getBoundingClientRect();
+        var overlapping = $(chosenWidget).find(".search-choice").filter(function(index, item) {
+            var itemRect = item.getBoundingClientRect();
+            return rectanglesOverlap(itemRect, theButtonRect);
+        });
+        /* If not - we're done */
+        if(!overlapping.length) {
+            // console.log("No overlapping options");
+            return;
+        }
+        // console.log("Overlapping options:");
+        // console.log(overlapping);
+        /* Prepend the element with non visible element spanning till the end of line */
+        overlappingOption = overlapping.get(0);
+
+        $("<li class='any-all-button-protector'></li>").insertBefore(overlappingOption);
+    }).change();
+}
+
+/* 'Refine Search' button on model / cover categories */
+$("#index-categories-refine-search-btn").on('click', function(event) {
+    event.preventDefault();
+    $("#refine-search").show();
+    /* Delete the button */
+    $(this).remove();
+});
+
+(function() {
+    /* Code to handle model praises on model page */
+
+    /* Hide / Show the model praise eidt form */
+    $(".model-praise-button").on('click', function(e) {
+        e.preventDefault();
+        $(".model-praise-container").toggle();
+        $(".model-praise-button").toggle();
+    });
+
+    /* Cancel action, hide the form */
+    $(".model-praise-cancel-button").on('click', function(e) {
+        e.preventDefault();
+        $(".model-praise-container").toggle();
+    });
+
+    /* Save the praise */
+    $(".model-praise-save-button").on('click', function(e) {
+        e.preventDefault();
+
+        var form = $(this).closest("form");
+        var url =form.attr("action");
+        var comment = form.find("textarea[name='model-praise-body']").val();
+        $(".model-praise-container").toggle();
+
+        $.ajax(url, {
+            method: "post",
+            data: {"comment": comment},
+            dataType: "json",
+            success: function (response) {
+                /* Reload current page */
+                window.location.reload();
+                $(".model-praise-button").toggle();
+            }
+        });
+    });
+})();
+
+/**
+ * Polyfills
+ */
+// Production steps of ECMA-262, Edition 5, 15.4.4.18
+// Reference: http://es5.github.io/#x15.4.4.18
+if (!Array.prototype.forEach) {
+
+    Array.prototype.forEach = function(callback/*, thisArg*/) {
+
+        var T, k;
+
+        if (this == null) {
+            throw new TypeError('this is null or not defined');
+        }
+
+        // 1. Let O be the result of calling toObject() passing the
+        // |this| value as the argument.
+        var O = Object(this);
+
+        // 2. Let lenValue be the result of calling the Get() internal
+        // method of O with the argument "length".
+        // 3. Let len be toUint32(lenValue).
+        var len = O.length >>> 0;
+
+        // 4. If isCallable(callback) is false, throw a TypeError exception.
+        // See: http://es5.github.com/#x9.11
+        if (typeof callback !== 'function') {
+            throw new TypeError(callback + ' is not a function');
+        }
+
+        // 5. If thisArg was supplied, let T be thisArg; else let
+        // T be undefined.
+        if (arguments.length > 1) {
+            T = arguments[1];
+        }
+
+        // 6. Let k be 0.
+        k = 0;
+
+        // 7. Repeat while k < len.
+        while (k < len) {
+
+            var kValue;
+
+            // a. Let Pk be ToString(k).
+            //    This is implicit for LHS operands of the in operator.
+            // b. Let kPresent be the result of calling the HasProperty
+            //    internal method of O with argument Pk.
+            //    This step can be combined with c.
+            // c. If kPresent is true, then
+            if (k in O) {
+
+                // i. Let kValue be the result of calling the Get internal
+                // method of O with argument Pk.
+                kValue = O[k];
+
+                // ii. Call the Call internal method of callback with T as
+                // the this value and argument list containing kValue, k, and O.
+                callback.call(T, kValue, k, O);
+            }
+            // d. Increase k by 1.
+            k++;
+        }
+        // 8. return undefined.
+    };
+}
+
+/* NodeList.forEach - requires Array.forEach */
+if (window.NodeList && !NodeList.prototype.forEach) {
+    NodeList.prototype.forEach = Array.prototype.forEach;
+}

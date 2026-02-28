@@ -1,0 +1,51 @@
+/* ==================== MESSAGE SYSTEM BEG ================= */
+
+.messages .message {
+    max-width: 880px;    
+    padding: 10px 10px 10px 5px;
+    margin-top: 2px;
+}
+
+.middleSide .messages {
+    margin-bottom: 5px;
+}
+
+.messages .message .text {
+    margin-left: 20px;
+}
+
+.messages .message .text a {
+    color: #000;
+    text-decoration: underline;
+    font-weight: bold;
+}
+
+.middleSide .messages .message {
+    margin-left: 10px;
+    margin-right: 10px;
+}
+
+.messages .warning { border: 1px solid #F0C000; background-color: #FFFFCE; color: #000; }
+.messages .success { border: 1px solid #009900; background-color: #DDFFDD; color: #000; }
+.messages .error { border: 1px solid #bb0101; background-color: #f3bcbc; color: #000; }
+.messages .notice { border: 1px solid #3C78B5; background-color: #D8E4F1; color: #000; }
+
+.messageIconNotice, .messageIconSuccess, .messageIconError, .messageIconWarning {
+    position: relative;
+    width: 16px;
+    height: 16px;
+    background-image: url("/templates/thenude/images/status_iconset.png");
+    background-repeat: no-repeat;
+    float: left;
+    display: inline;
+}
+
+.messageIconWarning { background-position: -16px 0px; }
+.messageIconSuccess { background-position: -32px 0px; }
+.messageIconError { background-position: -48px 0px; }
+.messageIconNotice {background-position: 0px 0px; }
+
+header .messages {
+    padding-top: 5px;
+}
+/* ==================== MESSAGE SYSTEM END ================= */

@@ -1,0 +1,57 @@
+$(function() {
+    /**
+     *  This needs to be inside $(function(){}) due to the way the bootstrap-toggle
+     *  works. It copies elements around in $(function(){}) handler which
+     *  might fire at such a time that .hc-* is currently removed (while wrapping)
+     *  from DOM.
+     */
+    $(".hc-btn-accept").on('click', function () {
+        console.log("hc accept handle");
+        var toggleHandlerURL = $("#hc_switcher").data("toggle-handler-url");
+        var hardcore = true;
+        $.post(toggleHandlerURL, {"hardcore": hardcore}, function () {
+            document.location.reload();
+        });
+    });
+
+    $(".hc-btn-decline").on('click', function () {
+        console.log("hc decline handle");
+        var toggleHandlerURL = $("#hc_switcher").data("toggle-handler-url");
+        var hardcore = false;
+        $.post(toggleHandlerURL, {"hardcore": hardcore}, function () {
+            document.location.reload();
+        });
+    });
+
+    $("#hc_switcher").change(function () {
+        console.log("hc_switcher handle");
+        var toggleHandlerURL = $("#hc_switcher").data("toggle-handler-url");
+        var hardcore = $(this).is(":checked");
+        // case: hc was on and has been turned off, modal is not shown in this case
+        // and it requires separate handle
+        if (hardcore === false) {
+            $.post(toggleHandlerURL, {"hardcore": hardcore}, function () {
+                document.location.reload();
+            });
+        }
+    });
+
+    $("#hcModal").on('hidden.bs.modal', function () {
+        console.log("HC modal close handle");
+        var hardcore = false;
+        var toggleHandlerURL = $("#hc_switcher").data("toggle-handler-url");
+        $.post(toggleHandlerURL, {"hardcore": hardcore}, function () {
+            document.location.reload();
+        });
+    });
+
+    $('.hc-toggle input[type="checkbox"]').on('change', function(e){
+        if(e.target.checked){
+            $('#hcModal').modal();
+        }
+    });
+
+    $(".age-learn-more").on('click', function () {
+            $('#ageModal').modal();
+    });
+});

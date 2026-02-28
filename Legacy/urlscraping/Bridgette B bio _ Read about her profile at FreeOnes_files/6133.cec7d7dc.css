@@ -1,0 +1,1 @@
+.btn-copy{position:absolute;right:var(--spacing-2)}.btn-copy__success{display:none}.btn-copy--copied .btn-copy__success{display:block}.btn-copy--copied .btn-copy__default{display:none}.btn-copy--kebab{position:static}.btn-copy--kebab.btn-copy--copied .btn-copy__success{display:inline-block}

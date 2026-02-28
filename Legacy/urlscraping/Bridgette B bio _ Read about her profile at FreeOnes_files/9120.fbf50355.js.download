@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunk=self.webpackChunk||[]).push([[9120],{69120:function(e,t,n){n.d(t,{Z:function(){return c}});var a=n(52861),r=n(67948),u=n(55959);function c(e){const t=(0,u.ref)();return{getSiteLayoverText:async()=>a.Z.get(e).then((e=>{t.value=null,e.data&&(t.value=e.data)})).catch((e=>{r.Z.error(e)})),siteLayoverText:t}}}}]);

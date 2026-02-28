@@ -1,0 +1,67 @@
+{
+  "scrapers": {
+    "timeout": 10,
+    "retry_count": 3,
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  },
+  "bio_generation": {
+    "google_template_length": 3000,
+    "ollama_url": "http://localhost:11434/api/generate",
+    "ollama_path": "E:\\Ollama",
+    "ollama_model": "dolphin-mistral:7b",
+    "ollama_timeout": 120
+  },
+  "tag_rules": {
+    "ethnicity_tags": {
+      "caucasian": "Caucasian",
+      "latin": "Latina",
+      "cuban": "Latina",
+      "asian": "Asian",
+      "ebony": "Ebony",
+      "african": "Ebony"
+    },
+    "hair_color_tags": {
+      "blonde": "Blonde",
+      "blond": "Blonde",
+      "brown": "Brunette",
+      "brunette": "Brunette",
+      "red": "Redhead",
+      "auburn": "Redhead",
+      "black": "Black Hair"
+    },
+    "measurements_thresholds": {
+      "big_boobs_min": 36,
+      "small_boobs_max": 32
+    },
+    "career_length_thresholds": {
+      "milf_years": 10
+    }
+  },
+  "sources": {
+    "iafd": {
+      "enabled": true,
+      "priority": 1
+    },
+    "freeones": {
+      "enabled": true,
+      "priority": 2
+    },
+    "babepedia": {
+      "enabled": true,
+      "priority": 3
+    },
+    "thenude": {
+      "enabled": true,
+      "priority": 4
+    }
+  },
+  "ui": {
+    "window_width": 1200,
+    "window_height": 900,
+    "theme": "default"
+  },
+  "data": {
+    "performers_dir": "data/performers",
+    "database_path": "data/database.sqlite"
+  }
+}

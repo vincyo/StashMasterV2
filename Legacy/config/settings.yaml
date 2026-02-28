@@ -1,0 +1,47 @@
+# Configuration de StashMaster V2
+phase1_fields:
+  - Name
+  - Disambiguation
+  - Aliases
+  - Birthdate
+  - Deathdate
+  - Country
+  - Ethnicity
+  - Hair Color
+  - Eye Color
+  - Height
+  - Weight
+  - Measurements
+  - Fake Tits
+  - Career Length
+phase2_fields:
+  - Bio
+  - Trivia
+  - Awards
+  - Tattoos
+  - Piercings
+  - Tags
+  - URLs
+  - Details
+
+# ── Groups (DVDs) ──────────────────────────────────────────────
+group_phase1_fields:
+  - Title
+  - Aliases
+  - Date
+  - Studio
+  - Director
+  - Duration
+  - Description
+  - Tags
+  - URLs
+
+group_sources_priority:
+  - data18          # P1 — tags, scènes, synopsis détaillés
+  - iafd_dvd        # P2 — référence US/classiques, cast, dates fiables
+  - adultdvdempire  # P3 — synopsis, covers
+  - jeedoo          # P4 — productions européennes uniquement
+
+group_phase2_sources:  # sources avec URLs de scènes individuelles
+  - data18
+  - adultdvdempire

@@ -1,0 +1,75 @@
+
+(function() {
+	"use strict";
+	
+	var storage = new ObjectStorage(location.pathname + '#filters', 500).local,
+		arr = storage.arr || [],
+		filterTypes = $('#filters input[name="filterop"]'),
+		filterType = storage.filterType || 'fltAND';
+	
+	filterTypes
+		.change(function() {
+			filterType = storage.filterType = this.value;
+			$('#personal').DataTable().draw();
+		});
+	
+	filterTypes.each(function() {
+		this.checked = this.value === filterType;
+	});
+	
+	
+	$('#filters input[type=checkbox]')
+		.each(function() {
+			this.checked = ~arr.indexOf(this.value);
+		})
+		.change(function() {
+			if (this.checked) {
+				arr.push(this.value);
+			} else {
+				arr.splice(arr.indexOf(this.value), 1);
+			}
+			
+			storage.arr = arr;
+
+			$('#personal').DataTable().draw();
+
+		});
+	
+	$('.reset-filter').on('click', function() {
+		arr = [];
+		storage.arr = [];
+		$('#filters input[type=checkbox]').each(function() {
+			this.checked = false;
+		});
+		$('#personal').DataTable().draw();
+	});
+	
+	$.fn.dataTableExt.afnFiltering.push(function(oSettings, aData, iDataIndex) {
+		var filterType = $('[name="filterop"]:checked').val(),
+			v,
+			genres = aData[3].toLowerCase();
+		if (!arr.length) return true;
+		switch (filterType) {
+			case 'fltAND':
+				v = true;
+				for (var i = 0; i < arr.length; i++) {
+					v = v && ~genres.indexOf(arr[i].toLowerCase());
+				}
+				return v;
+			case 'fltOR':
+				v = false;
+				for (var i = 0; i < arr.length; i++) {
+					v = v || ~genres.indexOf(arr[i].toLowerCase());
+				}
+				return v;
+			case 'fltNOT':
+				v = true;
+				for (var i = 0; i < arr.length; i++) {
+					v = v && !~genres.indexOf(arr[i].toLowerCase());
+				}
+				return v;
+
+		}
+		return false;
+	});
+})();

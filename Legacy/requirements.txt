@@ -1,0 +1,10 @@
+# tkinter is part of stdlib, not a pip package
+sv_ttk
+requests
+pillow
+loguru
+pydantic
+pyyaml
+lxml
+beautifulsoup4
+google-generativeai
