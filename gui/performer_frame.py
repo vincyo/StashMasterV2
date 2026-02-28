@@ -810,6 +810,23 @@ class PerformerFrame(ttk.Frame):
             messagebox.showerror("Erreur", "Impossible de charger les données du performer.")
             return
 
+        # 0. Vérification interactive des URLs AVANT de charger dans l'interface
+        if data.get("name"):
+            # Récupération URLs existantes
+            raw_urls = data.get("urls", [])
+            if isinstance(raw_urls, str):
+                raw_urls = [u.strip() for u in raw_urls.splitlines() if u.strip()]
+            elif raw_urls is None:
+                raw_urls = []
+            
+            # Lancement de la fenêtre de vérification interactive
+            dlg = URLVerificationDialog(self, self.url_manager, raw_urls, data["name"])
+            self.wait_window(dlg)
+            
+            if dlg.final_urls is not None:
+                data["urls"] = dlg.final_urls
+            # Sinon, on garde les URLs d'origine (si l'utilisateur a fermé sans finir)
+
         self.stash_data = data
         
         # 1. Remplir les champs de métadonnées
