@@ -182,17 +182,44 @@ class URLManager:
     def is_url_reachable(self, url: str) -> bool:
         """Vérifie si l'URL répond (code 200)."""
         try:
-            # Ajout de allow_redirects=True pour gérer les passages http -> https
-            resp = requests.head(url, headers=HEADERS, timeout=5, allow_redirects=True)
-            if resp.status_code in (200, 301, 302, 303, 307, 308):
-                return True
-            if resp.status_code in (405, 403, 404):
-                # Fallback sur GET si HEAD est bloqué (fréquent sur IAFD)
-                resp = requests.get(url, headers=HEADERS, timeout=5, stream=True, allow_redirects=True)
+            # Headers enrichis pour éviter les blocages
+            headers = {
+                **HEADERS,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Encoding": "gzip, deflate",
+                "Connection": "keep-alive",
+            }
+            
+            # IAFD bloque souvent HEAD, on utilise directement GET pour IAFD
+            domain_key = self.get_domain_key(url)
+            if domain_key == "iafd.com":
+                resp = requests.get(url, headers=headers, timeout=10, stream=True, allow_redirects=True)
                 resp.close()
-                return resp.status_code in (200, 301, 302, 303, 307, 308)
+                print(f"[URLManager] IAFD GET → {resp.status_code} pour {url}")
+                return resp.status_code == 200
+            
+            # Pour les autres : HEAD puis GET en fallback
+            # Timeout augmenté à 10s (certains sites peuvent être lents)
+            resp = requests.head(url, headers=headers, timeout=10, allow_redirects=True)
+            
+            # Quand allow_redirects=True, requests suit les redirections automatiquement
+            # donc on reçoit le code final (200 si succès)
+            if resp.status_code == 200:
+                return True
+                
+            # Si HEAD échoue (405, 403, 404), fallback sur GET
+            if resp.status_code in (405, 403, 404):
+                print(f"[URLManager] HEAD → {resp.status_code}, tentative GET pour {url}")
+                resp = requests.get(url, headers=headers, timeout=10, stream=True, allow_redirects=True)
+                resp.close()
+                print(f"[URLManager] GET → {resp.status_code}")
+                return resp.status_code == 200
+                
+            print(f"[URLManager] Code inattendu {resp.status_code} pour {url}")
             return False
-        except:
+        except Exception as e:
+            # Debug : afficher l'erreur pour comprendre le problème
+            print(f"[URLManager] Erreur vérification {url}: {type(e).__name__}: {e}")
             return False
 
     def search_url_for_domain(self, domain: str, name: str) -> Optional[str]:
