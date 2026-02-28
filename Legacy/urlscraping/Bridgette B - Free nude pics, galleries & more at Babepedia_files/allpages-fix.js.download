@@ -1,0 +1,28 @@
+if(!location.hostname.match('babepedia.com') && !location.hostname.match('webcache.googleusercontent.com'))
+{
+window.location.replace("https://www.babe" + "pedia.com" + window.location.pathname + window.location.search);
+}
+if(location.hostname.match('pornproxy.'))
+{
+window.location.replace("https://www.babe" + "pedia.com" + window.location.pathname + window.location.search);
+}
+if(location.hostname.match('ultragay.org'))
+{
+window.location.replace("https://www.babe" + "pedia.com" + window.location.pathname + window.location.search);
+}
+if(location.hostname.match('www-babepedia-com.theporn.how'))
+{
+window.location.replace("https://www.babe" + "pedia.com" + window.location.pathname + window.location.search);
+}
+if(location.hostname.match('www-babepedia-com.proxyporn.org'))
+{
+window.location.replace("https://www.babe" + "pedia.com" + window.location.pathname + window.location.search);
+}
+if(location.hostname.match('www-babepedia-com.adultproxy.org'))
+{
+window.location.replace("https://www.babe" + "pedia.com" + window.location.pathname + window.location.search);
+}
+if(location.hostname.match('iphanatici.com'))
+{
+window.location.replace("https://www.babe" + "pedia.com" + window.location.pathname + window.location.search);
+}

@@ -239,7 +239,15 @@ class URLManager:
         try:
             # 1. Si le scraper a une méthode 'search' (implémentée pour XXXBios)
             if hasattr(scraper, "search"):
-                return scraper.search(name)
+                found_url = scraper.search(name)
+                # Valider que l'URL trouvée correspond bien au pattern de profil attendu
+                if found_url:
+                    if self.is_profile_url(found_url, domain):
+                        return found_url
+                    else:
+                        print(f"[URLManager] URL rejetée pour {domain} (pattern invalide) : {found_url}")
+                        return None
+                return None
             
             # 2. Construction d'URL (Boobpedia, XXXBios fallback)
             # XXXBiosScraper a build_url, BoobpediaScraper a build_url aussi ?
@@ -269,3 +277,163 @@ class URLManager:
             print(f"Erreur recherche {domain} pour {name}: {e}")
             return None
 
+
+class URLOptimizer:
+    """
+    Optimise et nettoie les listes d'URLs en supprimant les paramètres de tracking,
+    les doublons et en appliquant un système de priorité.
+    """
+    
+    # Liste de priorité des domaines (plus le score est bas, plus il est prioritaire)
+    PRIORITY_MAP = {
+        "iafd.com": 1,
+        "babepedia.com": 2,
+        "freeones.com": 3,
+        "freeones.xxx": 3,
+        "thenude.com": 4,
+        "data18.com": 5,
+        "adultfilmdatabase.com": 6,
+        "theporndb.net": 7,
+        "imdb.com": 8,
+        "boobpedia.com": 9,
+        "instagram.com": 10,
+        "twitter.com": 11,
+        "x.com": 12,
+        "onlyfans.com": 15,
+        "fansly.com": 16,
+        "xxxbios.com": 17,
+    }
+    
+    # Domaines à filtrer (publicité, tracking, redirections)
+    BLACKLIST_DOMAINS = [
+        "google.com",
+        "sjv.io",
+        "go.ad2up.com",
+        "click.",
+        "tracker.",
+        "affiliate.",
+        "redirect.",
+    ]
+
+    def clean_url(self, url: str) -> str:
+        """Supprime les paramètres de tracking et normalise l'URL"""
+        from urllib.parse import urlparse, urlunparse
+        
+        try:
+            u = urlparse(url)
+            # Normaliser le netloc en enlevant www.
+            netloc = u.netloc.replace("www.", "")
+            # On garde uniquement le schéma, le netloc normalisé et le path (pas les query params)
+            # Cela supprime tous les utm_, nats, ref, etc.
+            clean = urlunparse((u.scheme, netloc, u.path, '', '', ''))
+            return clean.rstrip('/')  # Enlever le / final pour éviter les doublons
+        except:
+            return url
+
+    def is_blacklisted(self, url: str) -> bool:
+        """Vérifie si l'URL est dans la blacklist (pub/tracking)"""
+        url_lower = url.lower()
+        for pattern in self.BLACKLIST_DOMAINS:
+            if pattern in url_lower:
+                return True
+        return False
+
+    def is_valid_profile_url(self, url: str, domain: str, performer_name: str = "") -> bool:
+        """Vérifie si l'URL correspond au pattern attendu pour un profil performer."""
+        import re
+        from urllib.parse import urlparse
+
+        low_url = url.lower()
+        path = urlparse(url).path.lower()
+        
+        # Validation stricte pour certains domaines
+        if domain == "xxxbios.com":
+            # Doit se terminer par -biography, pas des pages génériques
+            if not re.search(r'/[a-z0-9][a-z0-9-]*-biography/?$', url, re.I):
+                return False
+        
+        if domain == "iafd.com" and not ("person.rme" in url or "person.rvm" in url):
+            return False
+            
+        if domain == "babepedia.com" and "/babe/" not in url:
+            return False
+            
+        if domain == "boobpedia.com" and "/boobs/" not in url:
+            return False
+
+        # Rejeter les pages manifestement non-profil (scènes, galeries, tracking...)
+        bad_path_tokens = [
+            '/scene', '/scenes', '/video', '/videos', '/gallery', '/galleries',
+            '/image', '/images', '/pics', '/photo', '/photos', '/track/', '/updates',
+            '/category/', '/tag/', '/post/', '/episode/', '/clip/', '/clips/'
+        ]
+        if any(tok in path for tok in bad_path_tokens):
+            return False
+
+        # Pour les domaines non stricts, exiger un minimum de correspondance au nom performer
+        # pour limiter les pages hors-sujet.
+        strict_domains = {'iafd.com', 'thenude.com', 'babepedia.com', 'boobpedia.com', 'xxxbios.com', 'freeones.com', 'freeones.xxx'}
+        if performer_name and domain not in strict_domains:
+            name = performer_name.strip().lower()
+            tokens = [t for t in re.split(r'\s+', name) if len(t) >= 3]
+            slug = '-'.join(tokens)
+            compact = ''.join(tokens)
+            if tokens and not (
+                (slug and slug in low_url) or
+                (compact and compact in low_url) or
+                all(t in low_url for t in tokens[:2])
+            ):
+                return False
+        
+        # Autres domaines : accepter par défaut
+        return True
+
+    def get_top_urls(self, url_list: List[str], limit: int = 50, performer_name: str = "") -> List[str]:
+        """
+        Nettoie, déduplique et trie les URLs par priorité.
+        Retourne les top URLs jusqu'à la limite spécifiée.
+        """
+        cleaned_set = set()
+        ranked_urls = []
+
+        for raw_url in url_list:
+            if not raw_url or not isinstance(raw_url, str):
+                continue
+                
+            # Nettoyage
+            url = self.clean_url(raw_url.strip())
+            
+            # Filtrage blacklist
+            if self.is_blacklisted(url):
+                continue
+            
+            # Extraction du domaine
+            try:
+                domain = urlparse(url).netloc.replace("www.", "").lower()
+            except:
+                continue
+            
+            # Validation du pattern de profil
+            if not self.is_valid_profile_url(url, domain, performer_name=performer_name):
+                print(f"[URLOptimizer] URL rejetée (pattern invalide) : {url}")
+                continue
+            
+            # Éviter les doublons
+            if url in cleaned_set:
+                continue
+            
+            # Attribution de la priorité
+            priority = self.PRIORITY_MAP.get(domain, 99)  # 99 pour les sites inconnus
+            
+            ranked_urls.append({
+                "url": url,
+                "priority": priority,
+                "domain": domain
+            })
+            cleaned_set.add(url)
+
+        # Tri alphabétique demandé
+        ranked_urls.sort(key=lambda x: x['url'].lower())
+        
+        # Retourner uniquement les URLs (pas les métadonnées)
+        return [item['url'] for item in ranked_urls[:limit]]

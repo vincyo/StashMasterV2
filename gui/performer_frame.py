@@ -8,7 +8,7 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 import threading
 import re
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Callable
 
 # Imports locaux
 from utils.tag_engine import TagRulesEngine
@@ -18,8 +18,8 @@ from services.database import StashDatabase
 from services.config_manager import ConfigManager
 from services.scrapers import ScraperOrchestrator
 from services.source_finder import SourceFinderWidget
-from services.url_validator import URLValidatorWidget
 from services.url_manager import URLManager # Nouvelle importation
+from services.url_manager import URLOptimizer # Nouvelle importation
 from gui.url_verification_dialog import URLVerificationDialog # Nouvelle importation
 
 # utilitaires pour URL (nettoyage / fusion)
@@ -28,18 +28,19 @@ from utils.url_utils import clean_urls_list, merge_urls_by_domain
 class PerformerFrame(ttk.Frame):
     """Frame principal pour la gestion des performers"""
     
-    def __init__(self, parent, performer_id: Optional[str] = None):
+    def __init__(self, parent, performer_id: Optional[str] = None, on_exit_to_selector: Optional[Callable[[], None]] = None):
         super().__init__(parent)
         self.performer_id = performer_id
+        self.on_exit_to_selector = on_exit_to_selector
         
         # Initialisation des services
         self.config = ConfigManager()
         self.db = StashDatabase(self.config.get("database_path"))
         self.tag_rules = TagRulesEngine()
-        self.awards_cleaner = AwardsCleaner()
         self.bio_generator = BioGenerator()
         self.orchestrator = ScraperOrchestrator()
         self.url_manager = URLManager() # Initialisation URLManager
+        self.url_optimizer = URLOptimizer() # Initialisation URLOptimizer
         
         # Données
         self.stash_data: Dict[str, Any] = {}
@@ -55,6 +56,10 @@ class PerformerFrame(ttk.Frame):
         self.progress_bar: ttk.Progressbar = None # type: ignore
         self.status_label: ttk.Label = None # type: ignore
         self.url_tree: ttk.Treeview = None # type: ignore
+        self.btn_back: Optional[ttk.Button] = None
+        self.btn_next: Optional[ttk.Button] = None
+        self.btn_finish: Optional[ttk.Button] = None
+        self.btn_exit: Optional[ttk.Button] = None
         self.fields = [
             ("Nom", "name"),
             ("Aliases", "aliases"),
@@ -77,7 +82,7 @@ class PerformerFrame(ttk.Frame):
 
         # Bio UI (4 sous-onglets)
         self._bio_notebook: Optional[ttk.Notebook] = None
-        self._bio_slots: List[str] = ["", "", "", ""]  # 0=bio_raw, 1=trivia, 2=google, 3=ollama
+        self._bio_slots: List[str] = ["", "", "", "", ""]  # 0=bio_raw, 1=trivia, 2=google, 3=ollama, 4=stash_bio
         self._bio_merge_content: str = ""
         self._merge_vars: List[tk.BooleanVar] = []
 
@@ -100,6 +105,10 @@ class PerformerFrame(ttk.Frame):
         
         self._setup_ttk_styles()
         self._create_widgets()
+
+        if self.notebook:
+            self.notebook.bind("<<NotebookTabChanged>>", self._on_notebook_tab_changed)
+            self.after(200, self._update_wizard_buttons)
         
         # Différer le chargement pour que la mainloop soit démarrée
         if performer_id:
@@ -541,6 +550,7 @@ class PerformerFrame(ttk.Frame):
         top_o = ttk.Frame(tab_ollama)
         top_o.grid(row=0, column=0, sticky='ew', pady=(0, 6))
         ttk.Button(top_o, text='🤖 Générer Ollama', command=self._bio_generate_ollama).pack(side=tk.LEFT)
+        ttk.Button(top_o, text='🧹 Clear Cache', command=self._clear_ollama_cache).pack(side=tk.LEFT, padx=6)
         ttk.Button(top_o, text='🧽 Effacer', command=lambda: self._bio_clear(3)).pack(side=tk.LEFT, padx=6)
         self._ollama_status = ttk.Label(top_o, text='')
         self._ollama_status.pack(side=tk.RIGHT)
@@ -561,11 +571,18 @@ class PerformerFrame(ttk.Frame):
 
         src_box = ttk.LabelFrame(tab_merge, text=' Sources à fusionner ', padding=8)
         src_box.grid(row=0, column=0, sticky='ew', pady=(0, 8))
-        self._merge_vars = [tk.BooleanVar(value=True), tk.BooleanVar(value=True), tk.BooleanVar(value=True), tk.BooleanVar(value=True)]
+        self._merge_vars = [
+            tk.BooleanVar(value=True),
+            tk.BooleanVar(value=True),
+            tk.BooleanVar(value=True),
+            tk.BooleanVar(value=True),
+            tk.BooleanVar(value=False),
+        ]
         ttk.Checkbutton(src_box, text='Scrappé (bio)', variable=self._merge_vars[0]).pack(side=tk.LEFT, padx=6)
         ttk.Checkbutton(src_box, text='Scrappé (trivia)', variable=self._merge_vars[1]).pack(side=tk.LEFT, padx=6)
         ttk.Checkbutton(src_box, text='Google', variable=self._merge_vars[2]).pack(side=tk.LEFT, padx=6)
         ttk.Checkbutton(src_box, text='Ollama', variable=self._merge_vars[3]).pack(side=tk.LEFT, padx=6)
+        ttk.Checkbutton(src_box, text='Stash (bio existante)', variable=self._merge_vars[4]).pack(side=tk.LEFT, padx=6)
 
         prompt_lf = ttk.LabelFrame(tab_merge, text=' Directives IA (style, ton, taille, fusion...) ', padding=6)
         prompt_lf.grid(row=1, column=0, sticky='ew', pady=(0, 8))
@@ -713,6 +730,21 @@ class PerformerFrame(ttk.Frame):
 
         threading.Thread(target=run, daemon=True).start()
 
+    def _clear_ollama_cache(self):
+        """Nettoie les caches runtime (Python + modèle Ollama en mémoire)."""
+        def run():
+            try:
+                if self._ollama_status:
+                    self.after(0, lambda: self._ollama_status.config(text='Clear cache...'))
+                ok = self.bio_generator.clear_runtime_caches()
+                if self._ollama_status:
+                    self.after(0, lambda: self._ollama_status.config(text='Cache OK' if ok else 'Cache partiel'))
+            except Exception:
+                if self._ollama_status:
+                    self.after(0, lambda: self._ollama_status.config(text='Cache error'))
+
+        threading.Thread(target=run, daemon=True).start()
+
     def _bio_do_merge(self):
         prompt = self.bio_prompt_text.get('1.0', tk.END).strip() if getattr(self, 'bio_prompt_text', None) else ''
         sources = []
@@ -728,6 +760,10 @@ class PerformerFrame(ttk.Frame):
             t = self._bio_ollama_text.get('1.0', tk.END).strip()
             if t:
                 sources.append('BIO OLLAMA:\n' + t)
+        if self._merge_vars and len(self._merge_vars) > 4 and self._merge_vars[4].get():
+            stash_bio = str(self.stash_data.get('details', '') or '').strip()
+            if stash_bio:
+                sources.append('BIO STASH (EXISTANTE):\n' + stash_bio)
 
         current = "\n\n---\n\n".join(sources).strip()
         if not current:
@@ -835,19 +871,6 @@ class PerformerFrame(ttk.Frame):
             val = data.get(key)
             if val is None: val = ""
             
-            # Normalisation Date de Naissance / Décès (YYYY-MM-DD)
-            if key in ['birthdate', 'deathdate'] and val:
-                try:
-                    from datetime import datetime
-                    # Supposer format Stash ou autre et forcer ISO
-                    # Simple regex ou dateutil si dispo, ici on tente un parse basique
-                    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y"):
-                        try:
-                            val = datetime.strptime(str(val).split('T')[0], fmt).strftime("%Y-%m-%d")
-                            break
-                        except: continue
-                except: pass
-
             if not isinstance(val, str):
                 if isinstance(val, list):
                     # Normalisation URLs (Doublons + Tri)
@@ -857,8 +880,23 @@ class PerformerFrame(ttk.Frame):
                 else:
                     val = str(val)
 
-            if key == 'country' and val:
-                val = self._normalize_country(val)
+            # Nettoyage spécial des aliases : supprimer les placeholders
+            if key == 'aliases' and val:
+                alias_lines = [a.strip() for a in re.split(r'[\n\r,]+', val) if a.strip()]
+                banned = {"no known aliases", "none", "unknown", "n/a"}
+                alias_lines = [a for a in alias_lines if a.lower() not in banned]
+                val = "\n".join(alias_lines)
+
+            # Normalisation structurée body-art (tatouages/piercings)
+            if key in ('tattoos', 'piercings') and val:
+                val = self._normalize_body_art_value(key, val)
+
+            # Normalisation unifiée pour tous les champs non-multiline
+            if val and not vars.get('is_multiline'):
+                val = self._normalize_field_value(key, val)
+            elif key == 'awards' and val:
+                # Awards : nettoyage spécial via Gemini (champ multiline)
+                val = self.bio_generator.clean_awards_with_gemini(val)
                 
             if vars.get('is_multiline'):
                 st = vars['stash_widget']
@@ -872,9 +910,14 @@ class PerformerFrame(ttk.Frame):
                     et.delete('1.0', tk.END)
                     et.insert('1.0', val)
             else:
+                # Normaliser la valeur avant de la mettre
                 vars['stash'].set(val)
                 if not vars['main'].get():
                     vars['main'].set(val)
+                
+                # Mettre à jour la combobox avec la valeur normalisée
+                if isinstance(vars['entry'], ttk.Combobox):
+                    vars['entry']['values'] = [val] if val else []
             
             self._update_validation(key)
 
@@ -895,6 +938,8 @@ class PerformerFrame(ttk.Frame):
         # clean duplicates & empties on load
         if isinstance(stash_urls, list):
             cleaned = clean_urls_list(stash_urls)
+            # Optimisation et tri par priorité (Top 50)
+            cleaned = self.url_optimizer.get_top_urls(cleaned, limit=50, performer_name=self.stash_data.get('name', ''))
             self.stash_data['urls'] = cleaned
             stash_urls = cleaned
         self._highlight_missing_sources(stash_urls)
@@ -920,17 +965,108 @@ class PerformerFrame(ttk.Frame):
         self.progress_bar.pack(side=tk.RIGHT, padx=10)
 
         # Nouveaux outils V2
-        ttk.Button(btn_frame, text="🧹 Nettoyer URLs", command=self._clean_urls).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="🔗 Valider URLs", command=self._open_url_validator).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="🔎 Chercher Sources", command=self._open_source_finder).pack(side=tk.LEFT, padx=5)
 
-    def _open_url_validator(self):
-        """Ouvre le validateur d'URL pour ce performer"""
-        db_path = self.config.get("database_path")
-        stash_url = self.config.get("stash_url", "http://localhost:9999")
-        
-        widget = URLValidatorWidget(self, db_path=db_path, stash_url=stash_url, performer_id=self.performer_id)
-        widget.show()
+        # Workflow wizard: Back / Next / Finish / Exit
+        wizard_frame = ttk.Frame(toolbar)
+        wizard_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(6, 0))
+
+        self.btn_back = ttk.Button(wizard_frame, text="⬅ Back", command=self._go_back_tab)
+        self.btn_back.pack(side=tk.LEFT, padx=5)
+
+        self.btn_next = ttk.Button(wizard_frame, text="➡ Next", command=self._go_next_tab)
+        self.btn_next.pack(side=tk.LEFT, padx=5)
+
+        self.btn_finish = ttk.Button(wizard_frame, text="✅ Finish", command=self._finish_workflow)
+        self.btn_finish.pack(side=tk.LEFT, padx=5)
+
+        self.btn_exit = ttk.Button(wizard_frame, text="❌ Exit", command=self._exit_to_selector)
+        self.btn_exit.pack(side=tk.RIGHT, padx=5)
+
+        self._update_wizard_buttons()
+
+    def _current_tab_index(self) -> int:
+        if not self.notebook:
+            return 0
+        try:
+            return self.notebook.index(self.notebook.select())
+        except Exception:
+            return 0
+
+    def _on_notebook_tab_changed(self, _event=None):
+        self._update_wizard_buttons()
+        # Onglet 3 (Bio) : génération Google auto si vide
+        if self._current_tab_index() == 2:
+            self._auto_generate_google_bio_if_needed()
+
+    def _update_wizard_buttons(self):
+        idx = self._current_tab_index()
+
+        if self.btn_back:
+            self.btn_back.configure(state=("normal" if idx > 0 else "disabled"))
+
+        # Onglet 3: Finish visible, Next caché
+        if self.btn_next and self.btn_finish:
+            if idx >= 2:
+                self.btn_next.pack_forget()
+                if not self.btn_finish.winfo_manager():
+                    self.btn_finish.pack(side=tk.LEFT, padx=5)
+            else:
+                self.btn_finish.pack_forget()
+                if not self.btn_next.winfo_manager():
+                    self.btn_next.pack(side=tk.LEFT, padx=5)
+
+    def _go_back_tab(self):
+        if not self.notebook:
+            return
+        idx = self._current_tab_index()
+        if idx > 0:
+            self.notebook.select(idx - 1)
+
+    def _go_next_tab(self):
+        if not self.notebook:
+            return
+
+        # Sauvegarde auto à chaque passage d'onglet
+        saved = self._save_to_stash_internal(show_messages=False, reload_after_save=False)
+        if not saved:
+            messagebox.showerror("Sauvegarde", "Échec de sauvegarde automatique. Corrigez puis réessayez.")
+            return
+
+        idx = self._current_tab_index()
+        if idx < 2:
+            self.notebook.select(idx + 1)
+
+    def _finish_workflow(self):
+        # Dernier onglet : sauvegarde finale
+        saved = self._save_to_stash_internal(show_messages=False, reload_after_save=False)
+        if not saved:
+            messagebox.showerror("Finish", "Échec de sauvegarde finale.")
+            return
+        messagebox.showinfo("Finish", "Workflow terminé et sauvegardé.")
+
+    def _exit_to_selector(self):
+        # Reset par fermeture de la fenêtre courante, retour sélecteur ID
+        if self.on_exit_to_selector:
+            self.on_exit_to_selector()
+        else:
+            root = self.winfo_toplevel()
+            try:
+                root.destroy()
+            except Exception:
+                pass
+
+    def _auto_generate_google_bio_if_needed(self):
+        try:
+            current_google = self._bio_google_text.get('1.0', tk.END).strip() if self._bio_google_text else ""
+        except Exception:
+            current_google = ""
+
+        if current_google:
+            return
+
+        # Génération automatique une seule fois quand on arrive sur l'onglet Bio
+        self._bio_generate_google()
 
     def _open_source_finder(self):
         """Ouvre le chercheur de sources pour ce performer"""
@@ -1042,11 +1178,29 @@ class PerformerFrame(ttk.Frame):
 
     def _save_to_stash(self):
         """Sauvegarde les modifications dans Stash"""
+        self._save_to_stash_internal(show_messages=True, reload_after_save=True)
+
+    def _save_to_stash_internal(self, show_messages: bool = True, reload_after_save: bool = True) -> bool:
+        """Sauvegarde interne (silencieuse possible) utilisée par le workflow Next/Finish."""
         if not self.performer_id:
-            messagebox.showerror("Sauvegarde", "Aucun performer n'est chargé.")
-            return
+            if show_messages:
+                messagebox.showerror("Sauvegarde", "Aucun performer n'est chargé.")
+            return False
 
         updates = self._get_field_values()
+
+        # Normaliser systématiquement les champs "simples" avant sauvegarde
+        for key, meta in self.field_vars.items():
+            if not meta.get('is_multiline') and key in updates:
+                raw_val = str(updates.get(key) or "").strip()
+                if raw_val:
+                    updates[key] = self._normalize_field_value(key, raw_val)
+
+        # Normaliser/structurer les champs body-art avant sauvegarde
+        for key in ('tattoos', 'piercings'):
+            if key in updates:
+                updates[key] = self._normalize_body_art_value(key, str(updates.get(key) or ""))
+
         updates['details'] = self._get_best_bio_text()
         
         # S'assurer que les découvertes d'URL sont incluses si modifiées
@@ -1054,13 +1208,16 @@ class PerformerFrame(ttk.Frame):
             updates['discovered_urls'] = updates['urls']
         
         if self.db.save_performer_metadata(self.performer_id, updates):
-            # Mettre à jour aussi l'URL principale si trouvée? 
-            # Stash a une colonne 'url' unique sur la table performers.
-            messagebox.showinfo("Sauvegarde", "Performer mis à jour avec succès dans Stash.")
-            # Recharger pour rafraîchir les colonnes 'Stash'
-            self._load_from_stash()
-        else:
+            if show_messages:
+                messagebox.showinfo("Sauvegarde", "Performer mis à jour avec succès dans Stash.")
+            if reload_after_save:
+                # Recharger pour rafraîchir les colonnes 'Stash'
+                self._load_from_stash()
+            return True
+
+        if show_messages:
             messagebox.showerror("Sauvegarde", "Erreur lors de la sauvegarde dans la base de données.")
+        return False
 
     def _scrape_all(self):
         """Orchestre le scraping multi-sources avec barre de progression"""
@@ -1167,19 +1324,15 @@ class PerformerFrame(ttk.Frame):
                     
                 val = res.get(key, "")
                 
-                # Normalisation spécifique
-                if key == 'country' and val:
-                    val = self._normalize_country(val)
-                elif key in ['birthdate', 'deathdate'] and val:
-                    # (Re-use normalization logic)
-                    try:
-                        from datetime import datetime
-                        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y"):
-                            try:
-                                val = datetime.strptime(str(val).split('T')[0], fmt).strftime("%Y-%m-%d")
-                                break
-                            except: continue
-                    except: pass
+                # Normalisation unifiée pour tous les champs non-multiline
+                if val and not fields.get('is_multiline'):
+                    val = self._normalize_field_value(key, str(val))
+                elif key == 'awards' and val:
+                    # Awards : nettoyage spécial via Gemini (champ multiline)
+                    val = self.bio_generator.clean_awards_with_gemini(val)
+                elif key in ('tattoos', 'piercings') and val:
+                    val = self._normalize_body_art_value(key, str(val))
+                
                 # Cas spécial : pour la ligne URLs, on veut l'URL source
                 if key == "urls" and res.get('url'):
                     val = res['url']
@@ -1216,6 +1369,9 @@ class PerformerFrame(ttk.Frame):
                         current_text = fields['entry'].get('1.0', tk.END).strip()
                         current_aliases = [a.strip() for a in re.split(r'[\n\r,]+', current_text) if a.strip()]
                         incoming_aliases = [a.strip() for a in re.split(r'[\n\r,]+', str(val)) if a.strip()]
+                        banned = {"no known aliases", "none", "unknown", "n/a"}
+                        current_aliases = [a for a in current_aliases if a.lower() not in banned]
+                        incoming_aliases = [a for a in incoming_aliases if a.lower() not in banned]
                         merged = []
                         seen = set()
                         for a in (current_aliases + incoming_aliases):
@@ -1242,7 +1398,17 @@ class PerformerFrame(ttk.Frame):
                 if not fields.get('is_multiline') and isinstance(fields['entry'], ttk.Combobox):
                     stash_val = fields['stash'].get().strip()
                     source_vals = [s.get().strip() for s in fields['sources']]
-                    all_vals = sorted(list(set([v for v in ([stash_val] + source_vals) if v])))
+                    
+                    # Normaliser toutes les valeurs avant de les mettre dans la combobox
+                    all_raw = [v for v in ([stash_val] + source_vals) if v]
+                    all_normalized = []
+                    for v in all_raw:
+                        normalized_v = self._normalize_field_value(key, v)
+                        if normalized_v:
+                            all_normalized.append(normalized_v)
+                    
+                    # Dédupliquer et trier
+                    all_vals = sorted(list(set(all_normalized)))
                     fields['entry']['values'] = all_vals
 
         # 3. Remplissage du champ global URLs avec les découvertes triées
@@ -1255,6 +1421,9 @@ class PerformerFrame(ttk.Frame):
             # merge+clean sans doublons
             combined = merge_urls_by_domain(current_urls, all_discovered)
             combined = clean_urls_list(combined)
+            
+            # Optimisation et tri par priorité (Top 50)
+            combined = self.url_optimizer.get_top_urls(combined, limit=50, performer_name=self.stash_data.get('name', ''))
             
             fields['entry'].delete('1.0', tk.END)
             fields['entry'].insert('1.0', "\n".join(combined))
@@ -1431,6 +1600,166 @@ class PerformerFrame(ttk.Frame):
             return
         url = self.url_tree.item(selected[0])['values'][0]
         webbrowser.open(url)
+
+    def _normalize_field_value(self, field_key: str, value: str) -> str:
+        """Normalise une valeur en fonction du champ"""
+        if not value:
+            return ""
+        
+        value = value.strip()
+        
+        # Dates : formats YYYY-MM-DD
+        if field_key in ['birthdate', 'deathdate']:
+            from datetime import datetime
+            for fmt in ("%B %d, %Y", "%b %d, %Y", "%Y-%m-%d", "%d/%m/%Y", "%Y"):
+                try:
+                    dt = datetime.strptime(value.split('T')[0], fmt)
+                    return dt.strftime("%Y-%m-%d")
+                except:
+                    continue
+            return value
+        
+        # Pays : code ISO 2 lettres
+        if field_key == 'country':
+            return self._normalize_country(value)
+        
+        # Lieu de naissance : format "City, State, Country" avec pays normalisé
+        if field_key == 'birthplace':
+            # Standardiser les séparateurs en virgules propres
+            value = re.sub(r'\s*[,/]\s*', ', ', value)
+            parts = [p.strip() for p in value.split(',') if p.strip()]
+            if len(parts) >= 2:
+                # Dernier élément = pays -> on le normalise comme pour le champ country
+                last = parts[-1]
+                parts[-1] = self._normalize_country(last)
+                value = ', '.join(parts)
+            return value
+        
+        # Ethnicité : normaliser vers une valeur canonique basée sur la BDD
+        if field_key == 'ethnicity':
+            v = value.strip().lower()
+            ethnicity_map = {
+                # Caucasian / White
+                'white': 'Caucasian',
+                'caucasian': 'Caucasian',
+                'european': 'Caucasian',
+                # Latin / Latina
+                'latin': 'Latina',
+                'latina': 'Latina',
+                # Black / Ebony
+                'black': 'Black',
+                'ebony': 'Black',
+                'african american': 'Black',
+                # Asian
+                'asian': 'Asian',
+                # Mixed / Middle Eastern et autres cas mineurs
+                'mixed': 'Métisse',
+                'middle eastern': 'Middle Eastern',
+            }
+            if v in ethnicity_map:
+                return ethnicity_map[v]
+            return value.title()
+        
+        # Cheveux/Yeux : uniformiser
+        if field_key in ['hair_color', 'eye_color']:
+            # Supprimer espaces inutiles
+            v = re.sub(r'\s+', ' ', value).strip()
+            low = v.lower()
+            if field_key == 'eye_color':
+                # Mapping simple EN -> FR pour les yeux
+                eye_map = {
+                    'brown': 'Brun',
+                    'light brown': 'Brun',
+                    'dark brown': 'Brun',
+                    'blue': 'Bleu',
+                    'green': 'Vert',
+                    'hazel': 'Noisette',
+                    'grey': 'Gris',
+                    'gray': 'Gris',
+                }
+                return eye_map.get(low, v.title())
+            else:
+                # Cheveux : mapping EN -> FR principal
+                hair_map = {
+                    'brown': 'Brunette',
+                    'dark brown': 'Brunette',
+                    'light brown': 'Brunette',
+                    'black': 'Noir',
+                    'blonde': 'Blonde',
+                    'blond': 'Blonde',
+                    'red': 'Rousse',
+                    'redhead': 'Rousse',
+                }
+                return hair_map.get(low, v.title())
+        
+        # Années activité : uniformiser format "YYYY - Now"
+        if field_key == 'career_length':
+            # Unifier tous les tirets en " - "
+            value = re.sub(r'\s*[-–—]\s*', ' - ', value)
+            # Normaliser les mots finaux vers "Now"
+            value = re.sub(r'\b(present|current|now)\b', 'Now', value, flags=re.I)
+            value = re.sub(r'\s+', ' ', value).strip()
+            # Si on a juste "YYYY -" → compléter en "YYYY - Now"
+            m = re.match(r'^(\d{4})\s*-\s*$', value)
+            if m:
+                value = f"{m.group(1)} - Now"
+            return value
+        
+        # Mesures : format XX-YY-ZZ
+        if field_key == 'measurements':
+            # Uniformiser séparateurs
+            value = re.sub(r'\s*[-–—]\s*', '-', value)
+            return value
+        
+        # Height/Weight : format avec unités
+        if field_key in ['height', 'weight']:
+            # Enlever espaces inutiles
+            return re.sub(r'\s+', ' ', value).strip()
+        
+        # Par défaut: juste trim et normaliser espaces
+        return re.sub(r'\s+', ' ', value).strip()
+
+    def _normalize_body_art_value(self, field_key: str, value: str) -> str:
+        """Nettoie et structure les champs tattoos/piercings en liste lisible."""
+        if not value:
+            return ""
+
+        text = str(value).replace('\r', '\n').strip()
+        text = re.sub(r'(?im)^\s*(tattoos?|tatouages?|piercings?)\s*[:;]\s*', '', text)
+
+        raw_parts = re.split(r'[\n;]+', text)
+        normalized_parts = []
+        seen = set()
+
+        for part in raw_parts:
+            p = part.strip().strip('-').strip()
+            if not p:
+                continue
+
+            low = p.lower()
+            if 'nombres en francais' in low:
+                continue
+
+            if field_key == 'piercings':
+                p = re.sub(r'\bnavel\b', 'Nombril', p, flags=re.I)
+                p = re.sub(r'\bbelly\s*button\b', 'Nombril', p, flags=re.I)
+                p = re.sub(r'\bnipples?\b', 'Tétons', p, flags=re.I)
+                p = re.sub(r'\btit[s]?\b', 'Tétons', p, flags=re.I)
+
+            p = re.sub(r'\s+', ' ', p).strip(' ,.')
+            if len(p) < 2:
+                continue
+
+            key_norm = p.casefold()
+            if key_norm in seen:
+                continue
+            seen.add(key_norm)
+            normalized_parts.append(p)
+
+        if not normalized_parts:
+            return ""
+
+        return "\n".join(f"- {p}" for p in normalized_parts)
 
     def _normalize_country(self, country: str) -> str:
         """Convertit un nom de pays en code ISO 2 lettres"""

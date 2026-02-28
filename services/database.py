@@ -96,18 +96,55 @@ class StashDatabase:
             data['career_start'] = data.get('career_length', '')
             data['details'] = data.get('details', '')
 
-            # Custom Fields
+            # Custom Fields (lecture étendue + mapping des alias vers clés UI)
             cur.execute("SELECT field, value FROM performer_custom_fields WHERE performer_id=?", (performer_id,))
-            for cfield in cur.fetchall():
-                fname = cfield['field'].lower()
-                fval = cfield['value']
-                # On mappe 'birthplace' et 'dob' si présents dans les custom fields
-                if fname == 'birthplace':
-                    data['birthplace'] = fval
-                elif fname == 'dob' or fname == 'date of birth':
-                    data['birthdate'] = fval
-                elif fname == 'awards':
-                    data['awards'] = fval
+            custom_rows = cur.fetchall()
+            data['custom_fields'] = {}
+
+            custom_map = {
+                'birthplace': 'birthplace',
+                'place of birth': 'birthplace',
+                'dob': 'birthdate',
+                'date of birth': 'birthdate',
+                'awards': 'awards',
+                'trivia': 'trivia',
+                'trivia fr': 'trivia',
+                'tattoos': 'tattoos',
+                'tattoos fr': 'tattoos',
+                'piercings': 'piercings',
+                'piercings fr': 'piercings',
+                'official website': 'website',
+                'website': 'website',
+                'instagram': 'instagram',
+                'onlyfans': 'onlyfans',
+                'tiktok': 'tiktok',
+                'youtube': 'youtube',
+                'twitch': 'twitch',
+                'imdb': 'imdb',
+                'twitter': 'twitter',
+                'facebook': 'facebook',
+                'biography': 'details',
+                'bio': 'details',
+            }
+
+            for cfield in custom_rows:
+                field_raw = str(cfield['field'] or '').strip()
+                value_raw = str(cfield['value'] or '').strip()
+                if not field_raw:
+                    continue
+
+                fname = field_raw.lower()
+                data['custom_fields'][field_raw] = value_raw
+
+                ui_key = custom_map.get(fname)
+                if not ui_key:
+                    continue
+
+                # Priorité : si la clé n'est pas déjà remplie, on prend le custom field
+                # ou si la valeur actuelle est vide.
+                existing = data.get(ui_key)
+                if existing is None or str(existing).strip() == '':
+                    data[ui_key] = value_raw
 
             # Fallback: certains setups utilisent la colonne 'disambiguation' comme lieu de naissance
             if not data.get('birthplace') and data.get('disambiguation'):

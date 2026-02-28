@@ -37,42 +37,26 @@ def _extract_domain(url: str) -> str:
 
 
 def merge_urls_by_domain(base_urls: List[str], new_urls: List[str]) -> List[str]:
-    """Merge two lists of URLs, keeping at most one URL per domain.
+    """Merge two URL lists while preserving all distinct URLs.
 
-    The original ``base_urls`` are kept first; additional entries from
-    ``new_urls`` are appended only if their domain does not already appear in
-    ``base_urls``. Finally the combined list is sorted so that well‑known
-    "core" domains appear first (iafd, FreeOnes, etc.).
+    Historically this helper kept only one URL per domain, which could drop
+    many valid profile pages. We now keep every distinct URL (full-string
+    deduplication only) and preserve insertion order: ``base_urls`` first,
+    then ``new_urls``.
     """
     final_urls: List[str] = []
-    seen_domains = set()
+    seen = set()
 
-    # preserve base list order
-    for url in base_urls:
-        domain = _extract_domain(url)
-        seen_domains.add(domain)
-        final_urls.append(url)
+    for url in list(base_urls) + list(new_urls):
+        u = (url or "").strip()
+        if not u:
+            continue
+        if u in seen:
+            continue
+        seen.add(u)
+        final_urls.append(u)
 
-    for url in new_urls:
-        domain = _extract_domain(url)
-        if domain not in seen_domains:
-            final_urls.append(url)
-            seen_domains.add(domain)
-
-    # deduplicate full URLs just in case
-    # using dict.fromkeys preserves order
-    deduped = list(dict.fromkeys(final_urls))
-
-    # sort by core domains order
-    def sort_key(u: str) -> int:
-        ul = u.lower()
-        for i, dom in enumerate(CORE_DOMAINS):
-            if dom in ul:
-                return i
-        return len(CORE_DOMAINS)
-
-    deduped.sort(key=sort_key)
-    return deduped
+    return final_urls
 
 
 from typing import TYPE_CHECKING
@@ -83,14 +67,13 @@ if TYPE_CHECKING:
 
 
 def filter_live_urls(urls: List[str], results: list) -> List[str]:
-    """Return a sublist of ``urls`` keeping only those whose corresponding
-    validation results are not DEAD or ERROR.
+    """Return a sublist of ``urls`` keeping only those not confirmed DEAD.
 
     ``results`` should be the list returned by ``URLValidator.validate_urls``.
     """
     from services.url_validator import URLStatus
     """Return a sublist of `urls` keeping only those whose corresponding
-    validation results are not DEAD or ERROR.
+    validation results are not DEAD.
 
     The function assumes that ``results`` is in the same order as ``urls``
     (as produced by ``URLValidator.validate_urls``).  It is safe to pass the
@@ -101,6 +84,6 @@ def filter_live_urls(urls: List[str], results: list) -> List[str]:
 
     live: List[str] = []
     for url, res in zip(urls, results):
-        if res.status not in (URLStatus.DEAD, URLStatus.ERROR):
+        if res.status != URLStatus.DEAD:
             live.append(url)
     return live

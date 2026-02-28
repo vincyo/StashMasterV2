@@ -5,6 +5,7 @@ import webbrowser
 import time
 import requests
 from services.scrapers import HEADERS
+from services.url_manager import URLOptimizer
 
 class URLVerificationDialog(tk.Toplevel):
     """
@@ -14,6 +15,7 @@ class URLVerificationDialog(tk.Toplevel):
     def __init__(self, parent, url_manager, existing_urls, performer_name):
         super().__init__(parent)
         self.url_manager = url_manager
+        self.url_optimizer = URLOptimizer()
         self.existing_urls = existing_urls
         self.performer_name = performer_name
         self.final_urls = None
@@ -221,8 +223,10 @@ class URLVerificationDialog(tk.Toplevel):
                 final_list.append(u)
                 seen.add(u)
         
-        self.final_urls = final_list[:50]
-        print(f"[URLVerificationDialog] Fermeture forcée - {len(self.final_urls)} URLs")
+        # Optimisation et tri
+        final_list = self.url_optimizer.get_top_urls(final_list, limit=50, performer_name=self.performer_name)
+        self.final_urls = final_list
+        print(f"[URLVerificationDialog] Fermeture forcée - {len(self.final_urls)} URLs optimisées")
         self.destroy()
 
     def set_busy(self, busy):
@@ -261,11 +265,15 @@ class URLVerificationDialog(tk.Toplevel):
             if u not in seen:
                 final_list.append(u)
                 seen.add(u)
-                if len(final_list) >= 50:  # Limite à 50 URLs totales
+                if len(final_list) >= 100:  # Limite temporaire haute avant optimisation
                     break
         
-        self.final_urls = final_list[:50]
-        print(f"[URLVerificationDialog] Liste finale: {len(self.final_urls)} URLs")
+        # Application de l'optimisation : nettoyage, déduplication, tri par priorité
+        print(f"[URLVerificationDialog] Avant optimisation: {len(final_list)} URLs")
+        final_list = self.url_optimizer.get_top_urls(final_list, limit=50, performer_name=self.performer_name)
+        
+        self.final_urls = final_list
+        print(f"[URLVerificationDialog] Liste finale optimisée: {len(self.final_urls)} URLs")
         
         # Fermeture immédiate
         self.after(100, self.destroy)

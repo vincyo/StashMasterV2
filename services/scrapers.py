@@ -198,7 +198,10 @@ class IAFDScraper(ScraperBase):
                 for br in sib.find_all("br"):
                     br.replace_with("|")
                 aliases = [_clean(a) for a in sib.get_text().split("|") if _clean(a)]
-                data["aliases"] = aliases
+                # Filtrer les entrées inutiles type "No known aliases"
+                aliases = [a for a in aliases if a.lower() not in {"no known aliases", "none", "unknown", "n/a"}]
+                if aliases:
+                    data["aliases"] = aliases
 
             elif key == "Birthday":
                 # "October 15, 1983 (42 years old)"
@@ -282,11 +285,11 @@ class IAFDScraper(ScraperBase):
 
     def _parse_awards(self, awards_div) -> str:
         """
-        Parse le bloc awards IAFD et retourne une chaîne formatée :
-            CEREMONIE
-            ANNEE - Winner/Nominee: Catégorie
-            ...
+        Parse le bloc awards IAFD et retourne une liste d'awards nettoyés :
+            YEAR ORG - Category (Movie) [Status]
         """
+        from utils.normalizer import clean_award_text
+        
         lines = []
         current_ceremony = ""
         current_year = ""
@@ -303,14 +306,16 @@ class IAFDScraper(ScraperBase):
                 # Nouvelle cérémonie
                 current_ceremony = text
                 current_year = ""
-                lines.append(f"\n{current_ceremony}")
 
             elif tag_name == "div" and "showyear" in tag_class:
                 current_year = text
 
             elif tag_name == "div" and "biodata" in tag_class:
                 if text:
-                    lines.append(f"{current_year} - {text}")
+                    # Inclure cérémonie + année + texte pour nettoyage complet
+                    raw_award = f"{current_ceremony} {current_year} {text}"
+                    cleaned_award = clean_award_text(raw_award)
+                    lines.append(cleaned_award)
 
         return "\n".join(lines).strip()
 

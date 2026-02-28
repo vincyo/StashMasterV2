@@ -84,7 +84,7 @@ class StashMasterApp(tk.Tk):
 
     def _setup_gui(self):
         if self.mode == "performer":
-            frame = PerformerFrame(self, self.entity_id)
+            frame = PerformerFrame(self, self.entity_id, on_exit_to_selector=self._return_to_selector)
             frame.pack(fill=tk.BOTH, expand=True)
         elif self.mode == "dvd":
             frame = DVDFrame(self, self.entity_id)
@@ -92,6 +92,12 @@ class StashMasterApp(tk.Tk):
         elif self.mode == "scene":
             frame = SceneFrame(self, self.entity_id)
             frame.pack(fill=tk.BOTH, expand=True)
+
+    def _return_to_selector(self):
+        """Ferme la fenêtre courante et revient au sélecteur (fenêtre ID)."""
+        self.destroy()
+        selector = SelectorWindow()
+        selector.mainloop()
 
 if __name__ == "__main__":
     app = SelectorWindow()

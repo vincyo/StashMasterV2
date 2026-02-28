@@ -9,6 +9,7 @@ import re
 import json
 import urllib.request
 import requests
+import gc
 from typing import Dict, List, Optional
 
 GEMINI_MODEL   = "gemini-2.0-flash"
@@ -53,11 +54,88 @@ class BioGenerator:
 
     def __init__(self, ollama_url: str = "http://localhost:11434/api/generate"):
         self.ollama_url = ollama_url
+        # GPU settings for Ollama generation
+        self.ollama_num_gpu = int(os.getenv("OLLAMA_NUM_GPU", "999"))
+        self.ollama_num_thread = int(os.getenv("OLLAMA_NUM_THREAD", "8"))
         self.gemini_key = self._load_gemini_key()
         if self.gemini_key:
             print("[BioGenerator] Clé Gemini chargée — génération Google avec IA activée.")
         else:
             print("[BioGenerator] Pas de clé Gemini — génération Google en mode template.")
+        print(f"[OLLAMA] Options GPU actives: num_gpu={self.ollama_num_gpu}, num_thread={self.ollama_num_thread}")
+
+    def _ollama_request(self, model: str, prompt: str, timeout: int = 360) -> Optional[str]:
+        """Call Ollama with GPU-preferred options and safe fallback."""
+        payload_gpu = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "keep_alive": "15m",
+            "options": {
+                "num_gpu": self.ollama_num_gpu,
+                "num_thread": self.ollama_num_thread,
+            }
+        }
+
+        try:
+            response = requests.post(self.ollama_url, json=payload_gpu, timeout=timeout)
+            if response.status_code == 200:
+                data = response.json()
+                text = data.get('response', '')
+                if text:
+                    print(f"[OLLAMA] Génération OK (GPU demandé) — model={model}")
+                    return text
+            else:
+                print(f"[OLLAMA] Réponse non-200 avec options GPU: {response.status_code}")
+        except Exception as e:
+            print(f"[OLLAMA] Erreur appel GPU, fallback CPU/auto: {e}")
+
+        # Fallback sans options explicites
+        try:
+            payload_fallback = {
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+            }
+            response = requests.post(self.ollama_url, json=payload_fallback, timeout=timeout)
+            if response.status_code == 200:
+                data = response.json()
+                text = data.get('response', '')
+                if text:
+                    print(f"[OLLAMA] Génération OK (fallback) — model={model}")
+                    return text
+            return None
+        except Exception as e:
+            print(f"[OLLAMA] Erreur fallback: {e}")
+            return None
+
+    def clear_runtime_caches(self, model: str = "dolphin-mistral:7b") -> bool:
+        """Clear Python runtime cache and ask Ollama to unload model from RAM/VRAM."""
+        ok = True
+        try:
+            gc.collect()
+        except Exception:
+            ok = False
+
+        # Ask Ollama to unload model from memory cache
+        try:
+            unload_payload = {
+                "model": model,
+                "prompt": "",
+                "stream": False,
+                "keep_alive": 0,
+            }
+            resp = requests.post(self.ollama_url, json=unload_payload, timeout=30)
+            if resp.status_code == 200:
+                print(f"[OLLAMA] Cache modèle déchargé: {model}")
+            else:
+                ok = False
+                print(f"[OLLAMA] Échec clear cache modèle ({resp.status_code})")
+        except Exception as e:
+            ok = False
+            print(f"[OLLAMA] Erreur clear cache: {e}")
+
+        return ok
 
     def _load_gemini_key(self) -> Optional[str]:
         """Cherche .gemini_key à la racine du projet."""
@@ -103,45 +181,106 @@ class BioGenerator:
             print(f"[GEMINI] Erreur : {e}")
             return None
 
+    def clean_awards_with_gemini(self, raw_awards: str) -> str:
+        """
+        Utilise Gemini pour nettoyer et formater les awards.
+        Fallback sur regex si Gemini échoue ou prend trop de temps.
+        """
+        if not raw_awards or not raw_awards.strip():
+            return ""
+        
+        # Si pas de clé Gemini, utiliser fallback immédiatement
+        if not self.gemini_key:
+            from utils.normalizer import clean_awards_field
+            return clean_awards_field(raw_awards)
+        
+        prompt = f"""Nettoie et formate cette liste d'awards de performer adulte.
+
+RÈGLES :
+1. Une ligne par award, format : "ANNÉE ORGANISATION - Catégorie (Film si mentionné) [Winner/Nominee]"
+2. Organisations reconnues : AVN Award, XBIZ Award, XRCO Award, NightMoves Award, Spank Bank Award, PornHub Award
+3. Supprimer TOUTES les phrases de prose/bio (ex: "she has been", "she was also", "including", etc.)
+4. Séparer les awards collés (ex: "Awards2015 Nominee: Cat1 Nominee: Cat2" → 2 lignes distinctes)
+5. Nettoyer les caractères UTF-8 mal encodés (Ã‚â€, etc.)
+6. Si l'année ou l'organisation manque, tenter de l'inférer du contexte
+
+TEXTE BRUT :
+{raw_awards[:3000]}
+
+Retourne UNIQUEMENT la liste nettoyée, une ligne par award, sans explication."""
+
+        try:
+            cleaned = self._call_gemini(prompt, use_search=False)
+            if cleaned and len(cleaned) > 20:  # Validation minimale
+                return cleaned
+        except Exception as e:
+            print(f"[GEMINI] Erreur nettoyage awards : {e}")
+        
+        # Fallback sur regex
+        from utils.normalizer import clean_awards_field
+        return clean_awards_field(raw_awards)
+
+
 
     def _summarize_awards(self, awards_raw: str) -> str:
-        """Convertit une liste brute de prix en une phrase de prose."""
+        """Convertit une liste d'awards nettoyés en une phrase de prose."""
         if not awards_raw or not awards_raw.strip():
             return ""
         lines = [l.strip() for l in awards_raw.splitlines() if l.strip()]
-        ceremonies = []
+        ceremonies = set()
         wins = []
         nom_count = 0
+        
         for line in lines:
-            # Détecter le nom de cérémonie (ligne sans tiret ni année en tête)
-            if re.match(r'^[A-Za-z]', line) and not re.match(r'^\d{4}', line):
-                name = line.split('\n')[0].strip()
-                if name and name not in ceremonies:
-                    ceremonies.append(name)
-            m = re.match(r'^(\d{4})\s*[-–]\s*(Winner|Nominee)\s*:\s*(.+)$', line, re.I)
+            # Ignorer les lignes vides ou trop courtes
+            if len(line) < 5:
+                continue
+            
+            # Pattern pour nouveau format: "2015 AVN Award - Category [Status]"
+            m = re.match(r'^(\d{4})\s+([A-Za-z\s]+Award)\s*-\s*(.+?)\s*(?:\[(Winner|Nominee)\])?$', line, re.I)
             if m:
-                year, status, category = m.group(1), m.group(2), m.group(3)
-                # Supprimer le titre du film entre parenthèses dans la catégorie
-                category = re.sub(r'\s*\(.*?\)', '', category).strip()
-                if 'winner' in status.lower():
+                year, org, category, status = m.groups()
+                ceremonies.add(org.strip())
+                
+                # Nettoyer la catégorie (retirer œuvre entre parenthèses pour le résumé)
+                category = re.sub(r'\s*\([^)]+\)', '', category).strip()
+                
+                if status and 'winner' in status.lower():
                     wins.append(f"{category} ({year})")
                 else:
                     nom_count += 1
+            
+            # Ancien format pour compatibilité : "2015 - Nominee: Category"
+            else:
+                old_m = re.match(r'^(\d{4})\s*[-–]\s*(Winner|Nominee)\s*:\s*(.+)$', line, re.I)
+                if old_m:
+                    year, status, category = old_m.groups()
+                    category = re.sub(r'\s*\([^)]+\)', '', category).strip()
+                    if 'winner' in status.lower():
+                        wins.append(f"{category} ({year})")
+                    else:
+                        nom_count += 1
+        
         if not ceremonies and not wins and nom_count == 0:
             return ""
-        cer_str = " et ".join(ceremonies) if ceremonies else "plusieurs cérémonies de l'industrie"
+        
+        cer_str = " et ".join(sorted(ceremonies)) if ceremonies else "plusieurs cérémonies de l'industrie"
         parts = []
+        
         if wins:
             win_str = ", ".join(wins[:3])
             if len(wins) > 3:
                 win_str += f" et {len(wins)-3} autre(s) trophée(s)"
             parts.append(f"remportant notamment {win_str}")
+        
         if nom_count:
             parts.append(f"cumulant plus de {nom_count} nomination(s)")
+        
         detail = ", ".join(parts)
         if detail:
             return f"Son talent a été salué aux {cer_str}, {detail}."
         return f"Son talent a été reconnu par de multiples distinctions aux {cer_str}."
+
 
     def _prose_appearance(self, measurements: str, height: str, weight: str,
                           hair_color: str, ethnicity: str,
@@ -442,19 +581,7 @@ DONNÉES FACTUELLES COMPLÈTES :
 
 Réponds UNIQUEMENT avec le texte de la biographie, sans préambule."""
             
-            response = requests.post(
-                self.ollama_url,
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False
-                },
-                timeout=360
-            )
-            
-            if response.status_code == 200:
-                return response.json().get('response', '')
-            return None
+            return self._ollama_request(model=model, prompt=prompt, timeout=360)
         except requests.exceptions.ReadTimeout:
             print("[OLLAMA] Timeout dépassé (360s) — essayez un modèle plus léger.")
             return None
@@ -481,19 +608,7 @@ Texte actuel :
 
 Renvoie UNIQUEMENT la biographie modifiée, sans commentaires."""
             
-            response = requests.post(
-                self.ollama_url,
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False
-                },
-                timeout=360
-            )
-            
-            if response.status_code == 200:
-                return response.json().get('response', '')
-            return None
+            return self._ollama_request(model=model, prompt=prompt, timeout=360)
         except requests.exceptions.ReadTimeout:
             print("[OLLAMA] Timeout dépassé (360s) lors du raffinement.")
             return None
@@ -512,13 +627,9 @@ Renvoie UNIQUEMENT la biographie modifiée, sans commentaires."""
             Texte à traduire : {text}
             Renvoie UNIQUEMENT la traduction, sans commentaires."""
             
-            response = requests.post(
-                self.ollama_url,
-                json={"model": model, "prompt": prompt, "stream": False},
-                timeout=60
-            )
-            if response.status_code == 200:
-                result = response.json().get('response', '').strip()
+            result = self._ollama_request(model=model, prompt=prompt, timeout=60)
+            if result:
+                result = result.strip()
                 return result if result else text
         except Exception as e:
             print(f"[OLLAMA] Erreur traduction {field_name}: {e}")

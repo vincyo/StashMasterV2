@@ -1,0 +1,242 @@
+function nl2br(t, e) {
+    return null == t ? "" : (t + "").replace(/([^>\r\n]?)(\r\n|\n\r|\r|\n)/g, "$1" + (e || void 0 === e ? "<br />" : "<br>") + "$2")
+}
+
+function calcWidth() {
+    var t = 0;
+    if (window.innerWidth <= 1040) {
+        $(".more").css("display", "none");
+        for (var e = $("#main li.more li").first(); e.length > 0;) e.insertBefore($("#main .more")), e = $("#main li.more li").first();
+        return
+    }
+    var i = $("#main .more").outerWidth(!0);
+    $("#main > li:not(.more)").each(function () {
+        t += $(this).outerWidth(!0)
+    }), i += $("#dropdown2").outerWidth(!0), i += $("#search").outerWidth(!0);
+    
+    var undressLink = $("#undresslink");
+    if (undressLink.length > 0) {
+        i += undressLink.outerWidth(!0);
+    }
+    
+    var n = $("nav").outerWidth(!1) - i;
+    if (t > n) {
+        for (var o, a = 0, r = !1; !r && a < 10;) {
+            var o = $("#main > li:not(.more)[data-priority=" + a + "]").last();
+            o.length > 0 ? r = !0 : a++
+        }
+        r && (o.attr("data-width", o.outerWidth(!0)), o.prependTo($("#main .more ul")), calcWidth())
+    } else if ($(".more li").length > 0) {
+        for (var s, c = 10, r = !1; !r && c >= 0;) {
+            var s = $("#main li.more li[data-priority=" + c + "]").first();
+            s.length > 0 && (r = !0), c--
+        }
+        if (r) {
+            var l = s.attr("data-order");
+            if (t + s.data("width") < n) {
+                for (var u = !1; !u && l < 10;) $("#main > li:not(.more)[data-order=" + ++l + "]").length > 0 && (u = !0);
+                console.log("putting " + s.text() + " back in position " + l), u ? s.insertBefore($("#main > li:not(.more)[data-order=" + l + "]")) : s.insertBefore($("#main .more"))
+            }
+        }
+    }
+    $(".more li").length > 0 ? $(".more").css("display", "inline-block") : $(".more").css("display", "none")
+}
+
+function LoadWhenReady2() {
+    var t = document.createElement("link");
+    t.rel = "stylesheet", t.href = "https://ajax.googleapis.com/ajax/libs/jqueryui/1.13.2/themes/humanity/jquery-ui.css", t.type = "text/css", t.crossOrigin = "anonymous";
+    var e = document.createElement("link");
+    e.rel = "stylesheet", e.href = "/mmenu/mmenu-light.css", e.type = "text/css";
+    var i = document.getElementsByTagName("link")[0];
+    i.parentNode.insertBefore(t, i), i.parentNode.insertBefore(e, i), $("#search input").focus(function () {
+        $("#logo").addClass("hide")
+    }), $("#search input").focusout(function () {
+        $("#logo").removeClass("hide")
+    }), $("#searchbutton").click(function () {
+        $("#search").submit()
+    }), $("#search").submit(function (t) {
+        return "" != $("#searchfield").val() && (window.location.href = "https://www.babepedia.com/search/" + encodeURI($("#searchfield").val())), !1
+    }), $(".lazy").Lazy({
+        scrollDirection: "vertical",
+        throttle: 100
+    }), $(".sidebar_block h2").click(function () {
+        $(this).parent().toggleClass("sidebar_block_collapse"), $(this).parent().toggleClass("collapsed_block", 200), $.post("/ajax-collapse-sidebar.php", {
+            title: $(this).text().trim()
+        }, function (t) {})
+    }), $(".regularbutton").button({
+        classes: {
+            "ui-button": ""
+        }
+    }), $(".editbutton").button({
+        classes: {
+            "ui-button": ""
+        },
+        icons: {
+            primary: "ui-icon-pencil"
+        }
+    }), $(".revisionbutton").button({
+        classes: {
+            "ui-button": ""
+        },
+        icons: {
+            primary: "ui-icon-seek-prev"
+        }
+    }), $(".replycommentbutton").button({
+        classes: {
+            "ui-button": ""
+        },
+        icons: {
+            primary: "ui-icon-arrowreturnthick-1-w"
+        }
+    }), $(".editcommentbutton").button({
+        classes: {
+            "ui-button": ""
+        },
+        icons: {
+            primary: "ui-icon-pencil"
+        }
+    }), $(".deletecommentbutton").button({
+        classes: {
+            "ui-button": ""
+        },
+        icons: {
+            primary: "ui-icon-trash"
+        }
+    }), $(".addbutton").button({
+        classes: {
+            "ui-button": ""
+        },
+        icons: {
+            primary: "ui-icon-circle-plus"
+        }
+    }), $(".uploadbutton").button({
+        classes: {
+            "ui-button": ""
+        },
+        icons: {
+            primary: "ui-icon-arrowstop-1-n"
+        }
+    }), $(".alertbutton").button({
+        classes: {
+            "ui-button": ""
+        },
+        icons: {
+            primary: "ui-icon-alert"
+        }
+    }), $("#light-switch-menu").click(function () {
+        $("#light-switch-label").trigger("click")
+    }), $("#light-switch-label").click(function () {
+        $.post("/ajax-switch-lights.php", {}, function (t) {
+            $("body").toggleClass("lightsoff"), window.dataLayer = window.dataLayer || [], dataLayer.push({
+                event: "interaction",
+                category: "Switch Lights",
+                action: $("body").hasClass("lightsoff")
+            })
+        })
+    }), $(".more[href='#']").click(function () {
+        return !1
+    }), $("#edituserlist").click(function (t) {
+        t.stopPropagation()
+    }), $("#searchfield").autocomplete({
+        source: "/ajax-search.php",
+        position: {
+            collision: "fit flip"
+        },
+        minLength: 2,
+        search: function (t, e) {
+            $(this).val().length > 16 ? $("#advanced-search-icon").hide() : $("#advanced-search-icon").show()
+        },
+        select: function (t, e) {
+            if (e.item) {
+                $("#searchfield").val(e.item.value);
+                var i, n = ["https://www.babepedia.com/babe/" + e.item.value.replace(" ", "_")],
+                    o = 270;
+                i = n,
+                    function (t) {
+                        for (; --t;) i.push(i.shift())
+                    }(++o);
+                var a = "0x0";
+                window.location.assign(n[a -= 0])
+            }
+        }
+    }), $("#search").submit(function (t) {
+        return "" != $("#searchfield").val() && $(location).prop("href", "https://www.babepedia.com/search/" + encodeURI($("#searchfield").val())), !1
+    }), $(".friendlink").on("click", function (t) {
+        var e = $(this).prop("href");
+        $.post("/trackfriend", {
+            x: e
+        }, function (t) {})
+    }), $(".dropdown2").click(function () {
+        $(this).children("ul").stop(!0, !0).slideToggle("fast"), $(this).toggleClass("dropdown-active")
+    }), $("a").each(function () {
+        var t = $(this).attr("rel"),
+            e = RegExp("/" + window.location.host + "/");
+        "#" !== $(this).href && void 0 !== $(this).href && (e.test(this.href) || (void 0 !== t && "nofollow noopener" === t ? $(this).attr("rel", "nofollow noopener external") : void 0 !== t && "nofollow" === t ? $(this).attr("rel", "nofollow external") : $(this).attr("rel", "external")))
+    }), $(window).on("resize", function () {
+        calcWidth()
+    });
+    var n = 0;
+    $("#main li").each(function () {
+        $(this).attr("data-order", n), void 0 === $(this).attr("data-priority") && $(this).attr("data-priority", 1), n++
+    }), calcWidth();
+    let o = new MmenuLight(document.querySelector("#mainmenu"), "(max-width: 1040px)");
+    o.navigation();
+    let a = o.offcanvas();
+    document.querySelector("a[href='#menu']").addEventListener("click", t => {
+        t.preventDefault(), a.open()
+    }), 0 == lights && $("#light-switch").trigger("click")
+}
+
+function showthumbs(t, e) {
+    var i = t.replace(/,/g, '" border=0><img src="/');
+    document.getElementById(e).innerHTML = '<img src="/' + i + '" border=0>'
+}
+
+function loadNoty(t) {
+    if (window.notyLoaded) {
+        t();
+        return
+    }
+    var e = document.createElement("link");
+    e.rel = "stylesheet", e.href = "https://cdnjs.cloudflare.com/ajax/libs/noty/3.1.4/noty.min.css", e.type = "text/css";
+    var i = document.getElementsByTagName("link")[0];
+    i.parentNode.insertBefore(e, i), window.parent.getScript("https://cdnjs.cloudflare.com/ajax/libs/noty/3.1.4/noty.min.js", function () {
+        window.notyLoaded = !0, t()
+    })
+}
+
+function showNoty(t, e) {
+    loadNoty(function () {
+        new Noty({
+            text: t,
+            type: e,
+            theme: "sunset",
+            timeout: 7500
+        }).show()
+    })
+}
+window.getScript = function (t, e) {
+    var i = document.createElement("script");
+    i.src = t, i.as = "script", -1 === t.indexOf(window.location.hostname) && (i.crossOrigin = "anonymous");
+    var n = document.getElementsByTagName("head")[0],
+        o = !1;
+    i.onload = i.onreadystatechange = function () {
+        o || this.readyState && "loaded" != this.readyState && "complete" != this.readyState || (o = !0, e(), i.onload = i.onreadystatechange = null, n.removeChild(i))
+    }, n.appendChild(i)
+}, window.getScripts = function (t, e) {
+    let i = 0,
+        n = t.length;
+    t.forEach(function (t) {
+        var o = document.createElement("script");
+        o.src = t, o.as = "script", -1 === t.indexOf(window.location.hostname) && (o.crossOrigin = "anonymous");
+        var a = document.getElementsByTagName("head")[0],
+            r = !1;
+        o.onload = o.onreadystatechange = function () {
+            r || this.readyState && "loaded" !== this.readyState && "complete" !== this.readyState || (r = !0, ++i === n && e(), o.onload = o.onreadystatechange = null, a.removeChild(o))
+        }, a.appendChild(o)
+    })
+}, window.parent.getScript("https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js", function () {
+    window.parent.getScripts(["https://ajax.googleapis.com/ajax/libs/jqueryui/1.13.2/jquery-ui.min.js", "https://cdnjs.cloudflare.com/ajax/libs/jquery.lazy/1.7.11/jquery.lazy.min.js", "https://www.babepedia.com/mmenu/mmenu-light.js"], function () {
+        "function" == typeof LoadWhenReady && LoadWhenReady(), LoadWhenReady2(), "function" == typeof LoadWhenReady3 && LoadWhenReady3(), "function" == typeof LoadWhenReady4 && LoadWhenReady4()
+    })
+});
