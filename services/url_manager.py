@@ -170,7 +170,8 @@ class URLManager:
     def is_profile_url(self, url: str, domain: str) -> bool:
         """Vérifie sommairement si l'URL ressemble à une page profil."""
         # Logique simplifiée, peut être affinée par scraper
-        if domain == "iafd.com" and "person.rme" in url: return True
+        if domain == "iafd.com" and ("person.rme" in url or "person.rvm" in url):
+            return True
         if domain == "freeones.xxx" and "/feed/" not in url: return True
         if domain == "thenude.com" and "_" in url: return True
         if domain == "babepedia.com" and "/babe/" in url: return True
@@ -181,16 +182,15 @@ class URLManager:
     def is_url_reachable(self, url: str) -> bool:
         """Vérifie si l'URL répond (code 200)."""
         try:
-            # HEAD request est plus rapide, fallback sur GET si 405/403
-            resp = requests.head(url, headers=HEADERS, timeout=5)
-            if resp.status_code == 200:
+            # Ajout de allow_redirects=True pour gérer les passages http -> https
+            resp = requests.head(url, headers=HEADERS, timeout=5, allow_redirects=True)
+            if resp.status_code in (200, 301, 302, 303, 307, 308):
                 return True
             if resp.status_code in (405, 403, 404):
-                 # Certains sites bloquent HEAD ou retournent 403 (IAFD parfois)
-                 # On tente un GET léger
-                 resp = requests.get(url, headers=HEADERS, timeout=5, stream=True)
-                 resp.close() # On ferme tout de suite
-                 return resp.status_code == 200
+                # Fallback sur GET si HEAD est bloqué (fréquent sur IAFD)
+                resp = requests.get(url, headers=HEADERS, timeout=5, stream=True, allow_redirects=True)
+                resp.close()
+                return resp.status_code in (200, 301, 302, 303, 307, 308)
             return False
         except:
             return False
