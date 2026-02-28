@@ -176,7 +176,15 @@ class URLManager:
         if domain == "thenude.com" and "_" in url: return True
         if domain == "babepedia.com" and "/babe/" in url: return True
         if domain == "boobpedia.com" and "/boobs/" in url: return True
-        if domain == "xxxbios.com" and "-biography" in url: return True
+        # XXXBios : doit avoir le pattern exact slug-biography (pas juste -biography)
+        if domain == "xxxbios.com":
+            # Pattern plus strict : xxxbios.com/[nom-artiste]-biography/
+            # Rejette les pages comme xxxbios.com/category/biography
+            import re
+            # Accepte les slugs avec lettres, chiffres et tirets, se terminant par -biography
+            if re.search(r'/[a-z0-9][a-z0-9-]*-biography/?$', url, re.I):
+                return True
+            return False
         return True 
 
     def is_url_reachable(self, url: str) -> bool:
@@ -192,16 +200,16 @@ class URLManager:
             
             domain_key = self.get_domain_key(url)
             
-            # IAFD bloque les bots (Cloudflare) → on accepte 403 si l'URL correspond au pattern
-            if domain_key == "iafd.com":
+            # IAFD et Babepedia bloquent les bots (Cloudflare) → on accepte 403 si l'URL correspond au pattern
+            if domain_key in ("iafd.com", "babepedia.com"):
                 if self.is_profile_url(url, domain_key):
-                    # URL IAFD valide par structure → on l'accepte même si 403
-                    print(f"[URLManager] IAFD accepté par pattern : {url}")
+                    # URL valide par structure → on l'accepte même si 403
+                    print(f"[URLManager] {domain_key} accepté par pattern : {url}")
                     return True
-                # Si ce n'est pas un profil, on teste quand même
+                # Si ce n'est pas un profil valide, on teste quand même
                 resp = requests.get(url, headers=headers, timeout=10, stream=True, allow_redirects=True)
                 resp.close()
-                print(f"[URLManager] IAFD GET → {resp.status_code}")
+                print(f"[URLManager] {domain_key} GET → {resp.status_code}")
                 # Accepter 200 ou 403 (403 = Cloudflare mais page existe)
                 return resp.status_code in (200, 403)
             

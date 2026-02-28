@@ -3,6 +3,8 @@ from tkinter import ttk, messagebox
 import threading
 import webbrowser
 import time
+import requests
+from services.scrapers import HEADERS
 
 class URLVerificationDialog(tk.Toplevel):
     """
@@ -71,7 +73,11 @@ class URLVerificationDialog(tk.Toplevel):
         
         self.btn_confirm = ttk.Button(nav_frame, text="✅ Confirmer & Suivant", command=self.on_confirm)
         self.btn_confirm.pack(side="right")
-
+        
+        # Bouton pour fermer sans attendre (visible seulement en fin de processus)
+        self.btn_close_now = ttk.Button(nav_frame, text="⏭️ Terminer Maintenant", command=self.force_close)
+        # Initialement caché
+        
         self.progress = ttk.Progressbar(main_frame, mode="determinate")
         self.progress.pack(side="bottom", fill="x", pady=5)
         
@@ -201,6 +207,23 @@ class URLVerificationDialog(tk.Toplevel):
     def open_current_url(self):
         url = self.url_var.get().strip()
         if url: webbrowser.open(url)
+    
+    def force_close(self):
+        """Ferme immédiatement sans attendre la validation des URLs secondaires"""
+        # Construct final list avec ce qu'on a déjà
+        final_list = []
+        for u in self.priority_results:
+            if u: final_list.append(u)
+        # Ajouter les URLs secondaires sans validation (trop lent)
+        seen = set(final_list)
+        for u in self.other_urls_buffer:
+            if u not in seen:
+                final_list.append(u)
+                seen.add(u)
+        
+        self.final_urls = final_list[:50]
+        print(f"[URLVerificationDialog] Fermeture forcée - {len(self.final_urls)} URLs")
+        self.destroy()
 
     def set_busy(self, busy):
         state = "disabled" if busy else "normal"
@@ -214,33 +237,36 @@ class URLVerificationDialog(tk.Toplevel):
             self.config(cursor="")
 
     def finish_process(self):
+        """Finalise le processus et ferme la fenêtre"""
         self.header_lbl.config(text="Finalisation...")
-        self.status_lbl.config(text="Traitement des URLs secondaires...", foreground="black")
-        self.set_busy(True)
+        self.status_lbl.config(text="Construction de la liste finale...", foreground="black")
         self.progress["value"] = 100
         
-        # Validate other URLs in background
-        def run():
-            final_others = []
-            seen = set()
-            for u in self.priority_results:
-                if u: seen.add(u)
-            
-            for u in self.other_urls_buffer:
-                if u not in seen and self.url_manager.is_url_reachable(u):
-                    final_others.append(u)
-                    seen.add(u)
-            
-            # Construct final list: Priorities first, then others
-            final_list = []
-            for u in self.priority_results:
-                if u: final_list.append(u)
-            final_list.extend(final_others)
-            
-            self.final_urls = final_list[:50]
-            # Utiliser winfo_exists() pour vérifier que le widget existe encore
-            if self.winfo_exists():
-                self.after(0, self.destroy)
-            
-        threading.Thread(target=run, daemon=True).start()
+        print(f"[URLVerificationDialog] Finalisation - URLs prioritaires: {len([u for u in self.priority_results if u])}")
+        print(f"[URLVerificationDialog] URLs secondaires: {len(self.other_urls_buffer)}")
+        
+        # Construct final list: Priorities first, then others (sans validation supplémentaire)
+        final_list = []
+        seen = set()
+        
+        # Ajouter les URLs prioritaires validées
+        for u in self.priority_results:
+            if u and u not in seen:
+                final_list.append(u)
+                seen.add(u)
+        
+        # Ajouter les URLs secondaires (sans re-validation pour éviter les blocages)
+        # Les 6 sources prioritaires sont déjà validées, c'est suffisant
+        for u in self.other_urls_buffer:
+            if u not in seen:
+                final_list.append(u)
+                seen.add(u)
+                if len(final_list) >= 50:  # Limite à 50 URLs totales
+                    break
+        
+        self.final_urls = final_list[:50]
+        print(f"[URLVerificationDialog] Liste finale: {len(self.final_urls)} URLs")
+        
+        # Fermeture immédiate
+        self.after(100, self.destroy)
 
