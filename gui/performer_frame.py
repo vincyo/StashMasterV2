@@ -151,9 +151,20 @@ class PerformerFrame(ttk.Frame):
                 if k == 'aliases':
                     values[k] = [a.strip() for a in re.split(r'[,\n\r]+', val) if a.strip()]
                 elif k == 'discovered_urls' or k == 'urls':
-                    values[k] = [u.strip() for u in re.split(r'[,\n\r\s]+', val) if u.strip()]
+                    # Peut contenir des entêtes de groupes; n'extraire que des URLs.
+                    values[k] = self._extract_urls_from_text(val)
                 else:
-                    values[k] = val
+                    # Re-normalisation à la sauvegarde pour cohérence
+                    if k in ('tattoos', 'piercings'):
+                        values[k] = self._normalize_body_art_value(k, val)
+                    elif k == 'awards':
+                        try:
+                            from utils.normalizer import format_awards_grouped
+                            values[k] = format_awards_grouped(val)
+                        except Exception:
+                            values[k] = val
+                    else:
+                        values[k] = val
             else:
                 # Handle tk.StringVar
                 values[k] = v['main'].get().strip()
@@ -233,7 +244,10 @@ class PerformerFrame(ttk.Frame):
             awards_count = 0
             if 'awards' in self.field_vars and self.field_vars['awards'].get('is_multiline'):
                 awards_raw = self.field_vars['awards']['entry'].get('1.0', tk.END).strip()
-                awards_count = len([l for l in awards_raw.splitlines() if l.strip()])
+                # Ignorer les entêtes (Winner/Nominee/Autres)
+                awards_count = len(
+                    [l for l in awards_raw.splitlines() if re.match(r'^\s*\d{4}\b', (l or '').strip())]
+                )
 
             if self._lbl_url_count:
                 self._lbl_url_count.config(text=f"URLs : {urls_count}")
@@ -931,8 +945,10 @@ class PerformerFrame(ttk.Frame):
                 if isinstance(val, list):
                     # Normalisation URLs (Doublons + Tri)
                     if key == 'urls':
-                        val = self._sort_urls(list(dict.fromkeys(val)))
-                    val = "\n".join(map(str, val))
+                        val = clean_urls_list(list(dict.fromkeys(val)))
+                        val = self._format_urls_grouped(val)
+                    else:
+                        val = "\n".join(map(str, val))
                 else:
                     val = str(val)
 
@@ -998,6 +1014,14 @@ class PerformerFrame(ttk.Frame):
             cleaned = self.url_optimizer.get_top_urls(cleaned, limit=50, performer_name=self.stash_data.get('name', ''))
             self.stash_data['urls'] = cleaned
             stash_urls = cleaned
+            # Ré-écrire le widget URLs avec le format groupé
+            try:
+                if 'urls' in self.field_vars and self.field_vars['urls'].get('is_multiline'):
+                    w = self.field_vars['urls']['entry']
+                    w.delete('1.0', tk.END)
+                    w.insert('1.0', self._format_urls_grouped(cleaned))
+            except Exception:
+                pass
         self._highlight_missing_sources(stash_urls)
         # update widget content if any (loop below handles this too but we
         # might want to ensure it's normalized)
@@ -1532,7 +1556,7 @@ class PerformerFrame(ttk.Frame):
             fields = self.field_vars["urls"]
             # Fusion intelligente : on garde l'existant déjà édité + découvertes
             current_text = fields['entry'].get('1.0', tk.END).strip()
-            current_urls = [u.strip() for u in re.split(r'[,\n\r\s]+', current_text) if u.strip()]
+            current_urls = self._extract_urls_from_text(current_text)
             
             # merge+clean sans doublons
             combined = merge_urls_by_domain(current_urls, all_discovered)
@@ -1542,7 +1566,7 @@ class PerformerFrame(ttk.Frame):
             combined = self.url_optimizer.get_top_urls(combined, limit=50, performer_name=self.stash_data.get('name', ''))
             
             fields['entry'].delete('1.0', tk.END)
-            fields['entry'].insert('1.0', "\n".join(combined))
+            fields['entry'].insert('1.0', self._format_urls_grouped(combined))
             self._update_validation("urls")
 
         # 4. Relancer la validation automatique des URLs Stash
@@ -1615,6 +1639,81 @@ class PerformerFrame(ttk.Frame):
             
         return sorted(list(set(urls)), key=sort_key)
 
+    def _extract_urls_from_text(self, text: str) -> List[str]:
+        """Extrait uniquement les lignes qui ressemblent à des URLs (http/https).
+
+        Important: le champ URLs peut contenir des entêtes de groupe.
+        """
+        if not text:
+            return []
+        urls = []
+        for ln in str(text).replace('\r', '\n').split('\n'):
+            ln = (ln or '').strip()
+            if not ln:
+                continue
+            if ln.lower().startswith(('http://', 'https://')):
+                urls.append(ln)
+        return urls
+
+    def _format_urls_grouped(self, urls: List[str]) -> str:
+        """Formate les URLs en 3 sections avec entêtes, tri alpha intra-groupe."""
+        urls = clean_urls_list(urls or [])
+        if not urls:
+            return ""
+
+        try:
+            from urllib.parse import urlparse
+            from services.interview_extractor import is_interview_url
+        except Exception:
+            urlparse = None
+            is_interview_url = None
+
+        social_roots = set(getattr(self.url_optimizer, 'SOCIAL_DOMAINS', set()) or set())
+
+        def _domain_of(u: str) -> str:
+            try:
+                return (urlparse(u).netloc or '').lower().replace('www.', '') if urlparse else ''
+            except Exception:
+                return ''
+
+        def _is_social(u: str) -> bool:
+            d = _domain_of(u)
+            if not d:
+                return False
+            for root in social_roots:
+                if d == root or d.endswith('.' + root):
+                    return True
+            return False
+
+        profiles, interviews, socials = [], [], []
+        for u in urls:
+            if is_interview_url and is_interview_url(u):
+                interviews.append(u)
+            elif _is_social(u):
+                socials.append(u)
+            else:
+                profiles.append(u)
+
+        profiles = sorted(profiles, key=lambda s: s.casefold())
+        interviews = sorted(interviews, key=lambda s: s.casefold())
+        socials = sorted(socials, key=lambda s: s.casefold())
+
+        out = []
+        if profiles:
+            out.append('Profils')
+            out.extend(profiles)
+            out.append('')
+        if interviews:
+            out.append('Interviews')
+            out.extend(interviews)
+            out.append('')
+        if socials:
+            out.append('Réseaux sociaux')
+            out.extend(socials)
+            out.append('')
+
+        return "\n".join(out).strip()
+
     def _populate_url_tree(self, urls):
         pass # Ancien Treeview, méthode obsolète
 
@@ -1626,10 +1725,9 @@ class PerformerFrame(ttk.Frame):
             return
         widget = self.field_vars['urls']['entry']
         raw = widget.get('1.0', tk.END)
-        urls = [u for u in raw.splitlines()]
-        cleaned = clean_urls_list(urls)
+        urls = self._extract_urls_from_text(raw)
         widget.delete('1.0', tk.END)
-        widget.insert('1.0', "\n".join(cleaned))
+        widget.insert('1.0', self._format_urls_grouped(urls))
 
     def _on_urls_modified(self, event=None):
         # if the user is editing URLs manually, keep them tidy and revalidate
@@ -1650,8 +1748,18 @@ class PerformerFrame(ttk.Frame):
         text = widget.get('1.0', tk.END).strip()
         if not text:
             return
-            
-        urls_to_check = text.split('\n')
+
+        # Garder le mapping URL -> ligne pour les tags (car il y a des entêtes)
+        lines = text.split('\n')
+        url_line_numbers = []
+        urls_to_check = []
+        for i, ln in enumerate(lines):
+            ln = (ln or '').strip()
+            if ln.lower().startswith(('http://', 'https://')):
+                urls_to_check.append(ln)
+                url_line_numbers.append(i + 1)  # Tk lines are 1-based
+        if not urls_to_check:
+            return
         
         def validate():
             from services.url_validator import URLStatus
@@ -1671,8 +1779,9 @@ class PerformerFrame(ttk.Frame):
                     tag = "url_warning"
                 
                 # Appliquer le tag à la ligne correspondante
-                line_start = f"{i+1}.0"
-                line_end = f"{i+1}.end"
+                ln_no = url_line_numbers[i] if i < len(url_line_numbers) else (i + 1)
+                line_start = f"{ln_no}.0"
+                line_end = f"{ln_no}.end"
                 self.after(0, lambda w=widget, t=tag, s=line_start, e=line_end: self._apply_url_tag(w, t, s, e))
 
             # remove dead/error URLs from the widget and re-clean
@@ -1680,9 +1789,10 @@ class PerformerFrame(ttk.Frame):
             live_urls = filter_live_urls(urls_to_check, results)
             live_urls = clean_urls_list(live_urls)
             if live_urls != urls_to_check:
-                # rewrite the text on the main thread
+                # rewrite the text on the main thread (format groupé)
+                grouped = self._format_urls_grouped(live_urls)
                 self.after(0, lambda: widget.delete('1.0', tk.END))
-                self.after(0, lambda: widget.insert('1.0', "\n".join(live_urls)))
+                self.after(0, lambda g=grouped: widget.insert('1.0', g))
                 # recolor lines if list shortened
         
 
@@ -1863,19 +1973,63 @@ class PerformerFrame(ttk.Frame):
 
         raw_parts = re.split(r'[\n;]+', text)
         normalized_parts = []
+        # Pour piercings: garder la version la plus spécifique si doublon (ex: "Tétons" vs "Tétons à partir de 2021")
+        best_by_base = {}
         seen = set()
 
+        def _strip_prefix_fr(s: str) -> str:
+            # "En français (style QC): ..." -> récupérer ce qu'il y a après ":" si possible
+            # Robuste aux accents cassés ("fran?ais")
+            if re.match(r'(?i)^\s*en\s+fran', s or ''):
+                if ':' in s:
+                    return s.split(':', 1)[1].strip()
+                return ''
+            return s
+
+        def _split_piercings_commas(s: str) -> List[str]:
+            if field_key != 'piercings':
+                return [s]
+            # Permet: "Nombril, tétons à partir de 2021" -> 2 items
+            parts = [p.strip() for p in (s or '').split(',')]
+            # Permet: "Tétons à partir de 2021 - Sein (2021)" -> 2 items
+            expanded: List[str] = []
+            for part in parts:
+                if re.search(r'\s+-\s+', part):
+                    expanded.extend([x.strip() for x in re.split(r'\s+-\s+', part) if x.strip()])
+                else:
+                    expanded.append(part)
+            parts = expanded
+            return [p for p in parts if p]
+
+        def _piercing_base_key(s: str) -> str:
+            low = (s or '').casefold()
+            low = re.sub(r'\s+\(.*?\)\s*$', '', low).strip()
+            # "à partir de 2021" ou encodage cassé "? partir de 2021"
+            low = re.sub(r'\s+(?:a|à|\?)\s*partir\s+de\s+\d{4}\b', '', low).strip()
+            low = re.sub(r'\s+since\s+\d{4}\b', '', low).strip()
+            return low
+
         for part in raw_parts:
-            p = part.strip().strip('-').strip()
-            if not p:
+            part = part.strip().strip('-').strip()
+            if not part:
                 continue
 
-            low = p.lower()
+            part = _strip_prefix_fr(part)
+            if not part:
+                continue
+
+            for p in _split_piercings_commas(part):
+                p = p.strip().strip('-').strip()
+                if not p:
+                    continue
+
+                low = p.lower()
             # Filtrer les parasites de type "conseils IA" / prompts / méta-texte
-            noisy_markers = [
+                noisy_markers = [
                 'nombres en francais',
                 'cette phrase est deja en francais',
                 'cette phrase est déjà en français',
+                'en français',
                 'pour améliorer le style',
                 'pour ameliorer le style',
                 'je vous recommande',
@@ -1883,41 +2037,69 @@ class PerformerFrame(ttk.Frame):
                 'par exemple',
                 'il est préférable', 'il est preferable',
                 'si le style québécois', 'si le style quebecois',
-            ]
-            if any(marker in low for marker in noisy_markers):
-                continue
-            if re.match(r'^\d+[\.)]\s*', low):
-                continue
+                ]
+                if any(marker in low for marker in noisy_markers):
+                    continue
+                if re.match(r'^\d+[\.)]\s*', low):
+                    continue
 
-            if field_key == 'piercings':
-                p = re.sub(r'\bnavel\b', 'Nombril', p, flags=re.I)
-                p = re.sub(r'\bbelly\s*button\b', 'Nombril', p, flags=re.I)
-                p = re.sub(r'\bnipples?\b', 'Tétons', p, flags=re.I)
-                p = re.sub(r'\btit[s]?\b', 'Tétons', p, flags=re.I)
-                p = re.sub(r'\bmamelons?\b', 'Tétons', p, flags=re.I)
-                p = re.sub(r'\(\s*style\s+qu[ée]b[ée]cois\s*/\s*qc\s*\)', '', p, flags=re.I)
-                # "Nombril : Nombril" -> "Nombril"
-                m_same = re.match(r'^\s*([^:]+?)\s*:\s*\1\s*$', p, flags=re.I)
-                if m_same:
-                    p = m_same.group(1).strip()
+                if field_key == 'piercings':
+                    p = re.sub(r'\bnavel\b', 'Nombril', p, flags=re.I)
+                    p = re.sub(r'\bbelly\s*button\b', 'Nombril', p, flags=re.I)
+                    p = re.sub(r'\bnipples?\b', 'Tétons', p, flags=re.I)
+                    p = re.sub(r'\btit[s]?\b', 'Tétons', p, flags=re.I)
+                    p = re.sub(r'\bmamelons?\b', 'Tétons', p, flags=re.I)
+                    p = re.sub(r'\bseins?\b', 'Tétons', p, flags=re.I)
+                    p = re.sub(r'\(\s*style\s+qu[ée]b[ée]cois\s*/\s*qc\s*\)', '', p, flags=re.I)
 
-            if field_key == 'tattoos':
-                p = re.sub(r'\bsous la nuque\b', 'Sous la nuque', p, flags=re.I)
-                p = re.sub(r'\bsous le cou\b', 'Sous la nuque', p, flags=re.I)
+                    # Réparer quelques artefacts d'encodage courants (accents → '?')
+                    # Ex: "t?tons" / "T?tons" → "Tétons", "? partir de 2021" → "à partir de 2021"
+                    p = re.sub(r'\bt\?tons\b', 'Tétons', p, flags=re.I)
+                    p = re.sub(r'\bte?tons\b', 'Tétons', p, flags=re.I)
+                    p = re.sub(r'(?i)\?\s*partir\s+de\s+(\d{4})\b', r'à partir de \1', p)
+                    p = re.sub(r'(?i)\ba\s+partir\s+de\s+(\d{4})\b', r'à partir de \1', p)
+                    # "Nombril : Nombril" -> "Nombril"
+                    m_same = re.match(r'^\s*([^:]+?)\s*:\s*\1\s*$', p, flags=re.I)
+                    if m_same:
+                        p = m_same.group(1).strip()
 
-            p = re.sub(r'\s+', ' ', p).strip(' ,.')
-            if len(p) < 2:
-                continue
+                if field_key == 'tattoos':
+                    p = re.sub(r'\bsous la nuque\b', 'Sous la nuque', p, flags=re.I)
+                    p = re.sub(r'\bsous le cou\b', 'Sous la nuque', p, flags=re.I)
 
-            key_norm = p.casefold()
-            if key_norm in seen:
-                continue
-            seen.add(key_norm)
-            normalized_parts.append(p)
+                p = re.sub(r'\s+', ' ', p).strip(' ,.')
+                if len(p) < 2:
+                    continue
+
+                if field_key == 'piercings' and p and p[0].isalpha():
+                    p = p[0].upper() + p[1:]
+
+                if field_key == 'piercings':
+                    base = _piercing_base_key(p)
+                    if base:
+                        prev = best_by_base.get(base)
+                        if not prev or len(p) > len(prev):
+                            best_by_base[base] = p
+                        continue
+
+                key_norm = p.casefold()
+                if key_norm in seen:
+                    continue
+                seen.add(key_norm)
+                normalized_parts.append(p)
+
+        if best_by_base:
+            for p in best_by_base.values():
+                key_norm = p.casefold()
+                if key_norm in seen:
+                    continue
+                seen.add(key_norm)
+                normalized_parts.append(p)
 
         if not normalized_parts:
             return ""
 
+        normalized_parts.sort(key=lambda s: s.casefold())
         return "\n".join(f"- {p}" for p in normalized_parts)
 
     def _normalize_country(self, country: str) -> str:

@@ -6,7 +6,7 @@ Normalizer - Utilitaires de normalisation des données (Pays, Dates, etc.)
 
 import re
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 # Mapping des codes pays ISO-2 vers les noms complets (Français/Anglais selon besoin)
 # Ici on utilise les noms anglais car Stash et IAFD sont majoritairement en anglais
@@ -169,28 +169,34 @@ def clean_award_text(raw_text: str) -> str:
         # Ne pas mettre de préfixe générique, on construira différemment
         org = ""
     
-    # 6. Détecter statut (Winner/Nominee)
+    # 6. Détecter statut (Winner/Nominee/Nomine/Nominé)
     status = None
+    nominee_word_re = r"\bNomin(?:ee|e)?\b"  # couvre: Nominee / Nomine / Nomin (après stripping accents)
+
     # Cas ambigu: les deux statuts apparaissent (souvent un artefact HTML) -> ignorer le statut
-    if re.search(r'\bWinner\b', text, re.I) and re.search(r'\bNominee\b', text, re.I) and not re.search(r'\b(Winner|Nominee)\s*:', text, re.I):
+    if (
+        re.search(r"\bWinner\b", text, re.I)
+        and re.search(nominee_word_re, text, re.I)
+        and not re.search(r"\b(Winner|Nominee|Nomine|Nomin(?:ee|e)?)\s*:", text, re.I)
+    ):
         text = re.sub(r'\bWinner\b', '', text, flags=re.I)
-        text = re.sub(r'\bNominee\b', '', text, flags=re.I)
+        text = re.sub(nominee_word_re, '', text, flags=re.I)
         status = None
     if re.search(r'\bWinner\s*:', text, re.I):
         status = "Winner"
         text = re.sub(r'\bWinner\s*:\s*', '', text, flags=re.I)
-    elif re.search(r'\bNominee\s*:', text, re.I):
+    elif re.search(rf'{nominee_word_re}\s*:', text, re.I):
         status = "Nominee"
-        text = re.sub(r'\bNominee\s*:\s*', '', text, flags=re.I)
+        text = re.sub(rf'{nominee_word_re}\s*:\s*', '', text, flags=re.I)
     elif re.search(r'\b\*\*Winner\b', text, re.I):
         status = "Winner"
         text = re.sub(r'\b\*\*Winner\b', '', text, flags=re.I)
     elif re.search(r'\bWinner\b', text, re.I):
         status = "Winner"
         text = re.sub(r'\bWinner\b', '', text, flags=re.I)
-    elif re.search(r'\bNominee\b', text, re.I):
+    elif re.search(nominee_word_re, text, re.I):
         status = "Nominee"
-        text = re.sub(r'\bNominee\b', '', text, flags=re.I)
+        text = re.sub(nominee_word_re, '', text, flags=re.I)
     
     # 7. Nettoyer l'année du reste du texte et mots clés redondants
     if year:
@@ -207,7 +213,8 @@ def clean_award_text(raw_text: str) -> str:
     text = re.sub(r'\[\s*\]', '', text)
     text = re.sub(r'\(\s*\)', '', text)
     text = re.sub(r'\s{2,}', ' ', text).strip()
-    text = re.sub(r'[.]{3,}$', '', text).strip()
+    # Ne pas supprimer les ellipses en fin de ligne: elles peuvent indiquer
+    # un intitulé tronqué (préférable à une perte d'info).
     
     # 8. Si aucune catégorie restante, ignorer
     if not text or len(text) < 5:
@@ -246,6 +253,47 @@ def clean_awards_field(awards_text: str) -> str:
     
     # Étape 1: Pré-traitement global pour séparer les blocs
     text = awards_text
+
+    # Si le texte est déjà groupé avec des entêtes (Winner/Nomine/Autres),
+    # injecter le statut dans les lignes suivantes pour préserver l'info
+    # même si les suffixes "[Winner]"/"[Nominee]" sont absents.
+    try:
+        raw_lines = [ln.rstrip() for ln in text.splitlines()]
+
+        def _header_status(line: str) -> Optional[str]:
+            l = (line or '').strip().casefold()
+            if l == 'winner':
+                return 'Winner'
+            if l in ('nominee', 'nomine', 'nominé'):
+                return 'Nominee'
+            if l in ('autres', 'others', 'other'):
+                return ''
+            return None
+
+        if any(_header_status(ln) is not None for ln in raw_lines):
+            current_status: str = ''
+            out_lines: List[str] = []
+            for ln in raw_lines:
+                stripped = (ln or '').strip()
+                if not stripped:
+                    continue
+
+                hs = _header_status(stripped)
+                if hs is not None:
+                    current_status = hs
+                    continue
+
+                if current_status and not re.search(
+                    r"\bWinner\b|\bNomin(?:ee|e)?\b|\[\s*(winner|nominee|nomine|nomin)\s*\]",
+                    stripped,
+                    re.I,
+                ):
+                    out_lines.append(f"{current_status}: {stripped}")
+                else:
+                    out_lines.append(stripped)
+            text = "\n".join(out_lines)
+    except Exception:
+        pass
     
     # Séparer les phrases avec ponctuation forte
     text = re.sub(r'([.!])\s+([A-Z])', r'\1\n\2', text)
@@ -254,15 +302,36 @@ def clean_awards_field(awards_text: str) -> str:
     text = re.sub(r'(\d{4})\s+(?=\d{4}\s+(?:AVN|XBIZ))', r'\1\n', text, flags=re.I)
     
     # Séparer "Boobs2016" -> "Boobs\n2016"  
-    text = re.sub(r'([a-z])(\d{4}\s+(?:Nominee|Winner))', r'\1\n\2', text, flags=re.I)
+    text = re.sub(r'([a-z])(\d{4}\s+(?:Winner|Nomin(?:ee|e)?))', r'\1\n\2', text, flags=re.I)
+
+    # Séparer les blocs collés où une année démarre un nouvel award en milieu de ligne
+    # ex: "... Now!2016 ..." ou "...(2017)2018 Best ..."
+    text = re.sub(r'([\w\)!\]])((?:19|20)\d{2})(?=\s)', r'\1\n\2', text)
+    text = re.sub(
+        r'\b((?:19|20)\d{2})\s+(?=(?:Best|Most|Winner|Nominee|Nomine|Nomin(?:ee|e)?|AVN|XBIZ|XRCO|NightMoves|PornHub|Spank|Female|Miss|Breakthrough|Girl|Cosplay|Fan|Special|America))',
+        r'\n\1 ',
+        text,
+        flags=re.I,
+    )
     
     lines = text.split('\n')
     cleaned_lines = []
+    active_status = ""
     
     for line in lines:
         line = line.strip()
         if not line or len(line) < 10:
             continue
+
+        # Propager le statut actif quand des lignes ont été découpées
+        # (ex: "Winner: ...2016 ..." -> la 2e ligne garde Winner)
+        status_prefix = re.match(r'^(Winner|Nominee|Nomine|Nomin(?:ee|e)?)\s*:\s*(.+)$', line, re.I)
+        if status_prefix:
+            st = (status_prefix.group(1) or "").strip().lower()
+            active_status = "Winner" if st == "winner" else "Nominee"
+            line = status_prefix.group(2).strip()
+        elif active_status and re.match(r'^(19|20)\d{2}\b', line) and not re.search(r'\b(Winner|Nominee|Nomine|Nomin(?:ee|e)?)\b', line, re.I):
+            line = f"{active_status}: {line}"
         
         # Normaliser Awards2015 → Awards 2015 AVANT extraction du préfixe
         line = re.sub(r'([a-zA-Z])(\d{4})', r'\1 \2', line)
@@ -288,7 +357,7 @@ def clean_awards_field(awards_text: str) -> str:
         
         # Détecter s'il y a plusieurs awards dans cette ligne
         # Compter les "Nominee:" et "Winner:" mais aussi les patterns "Best X" répétés
-        status_count = len(re.findall(r'\b(Winner|Nominee):', line, re.I))
+        status_count = len(re.findall(r'\b(Winner|Nominee|Nomine|Nomin(?:ee|e)?):', line, re.I))
         
         # Détecter aussi les awards sans status explicite mais avec patterns répétés
         # Exemple : "Best X, Title(year)Best Y, Title2(year)" 
@@ -306,7 +375,7 @@ def clean_awards_field(awards_text: str) -> str:
             # Séparer quand un mot title-case suit immédiatement une parenthèse fermante
             line = re.sub(r'\)([A-Z][a-z]+)', r')\n\1', line)
             # Séparer aussi sur les patterns ")Best" ou ")Nominee:" ou ")Winner:"
-            line = re.sub(r'\)(Best|Nominee|Winner)', r')\n\1', line, flags=re.I)
+            line = re.sub(r'\)(Best|Winner|Nominee|Nomine|Nomin(?:ee|e)?)', r')\n\1', line, flags=re.I)
             
             # Re-split en sous-lignes
             sublines = line.split('\n')
@@ -357,7 +426,7 @@ def clean_awards_field(awards_text: str) -> str:
         if status_count > 1:
             # Ligne avec plusieurs awards collés - extraire le préfixe commun
             # Séparer d'abord les awards collés après parenthèses : ")Nominee:" → ")\nNominee:"
-            line = re.sub(r'\)(Nominee|Winner):', r')\n\1:', line, flags=re.I)
+            line = re.sub(r'\)(Winner|Nominee|Nomine|Nomin(?:ee|e)?):', r')\n\1:', line, flags=re.I)
             line = re.sub(r'\)(Best\s+)', r')\n\1', line, flags=re.I)
             
             # Re-split si on a créé des nouvelles lignes
@@ -384,7 +453,7 @@ def clean_awards_field(awards_text: str) -> str:
             prefix = prefix_match.group(1).strip() if prefix_match else ""
             
             # Split sur la LIGNE ORIGINALE pour garder les positions correctes
-            parts = re.split(r'\s+(Winner|Nominee):\s*', line)
+            parts = re.split(r'\s+(Winner|Nominee|Nomine|Nomin(?:ee|e)?):\s*', line)
             
             # parts[0] pourrait contenir le préfixe (ou être inclus dedans)
             # Si prefix est vide, utiliser parts[0]
@@ -415,13 +484,24 @@ def clean_awards_field(awards_text: str) -> str:
 
     def _canonical_key(s: str) -> str:
         low = s.lower()
-        low = re.sub(r'\[(winner|nominee)\]', '', low)
-        low = re.sub(r'\b(winner|nominee)\b', '', low)
+        low = re.sub(r'\[(winner|nominee|nomine|nomin)\]', '', low)
+        low = re.sub(r'\b(winner|nominee|nomine|nomin)\b', '', low)
         return re.sub(r'[^a-z0-9]+', '', low)
 
-    def _has_status(s: str) -> bool:
-        l = s.lower()
-        return '[winner]' in l or '[nominee]' in l
+    def _status_rank(s: str) -> int:
+        l = (s or '').lower()
+        if '[winner]' in l or re.search(r'\bwinner\b', l):
+            return 2
+        if (
+            '[nominee]' in l
+            or '[nomine]' in l
+            or '[nomin]' in l
+            or re.search(r'\bnominee\b', l)
+            or re.search(r'\bnomine\b', l)
+            or re.search(r'\bnomin\b', l)
+        ):
+            return 1
+        return 0
 
     for line in cleaned_lines:
         key = _canonical_key(line)
@@ -432,9 +512,9 @@ def clean_awards_field(awards_text: str) -> str:
             unique_lines.append(line)
             continue
 
-        # Déjà vu: garder la version avec statut si l'autre ne l'a pas
+        # Déjà vu: préférer Winner > Nominee > aucune info
         idx = canonical_to_index[key]
-        if _has_status(line) and not _has_status(unique_lines[idx]):
+        if _status_rank(line) > _status_rank(unique_lines[idx]):
             unique_lines[idx] = line
 
     # Regrouper et trier : Winners d'abord (chronologique), puis Nominees
@@ -464,7 +544,7 @@ def clean_awards_field(awards_text: str) -> str:
         low = line.lower()
         if '[winner]' in low:
             winners.append(line)
-        elif '[nominee]' in low:
+        elif '[nominee]' in low or '[nomine]' in low or '[nomin]' in low:
             nominees.append(line)
         else:
             others.append(line)
@@ -476,4 +556,117 @@ def clean_awards_field(awards_text: str) -> str:
     # Sortie: uniquement des lignes d'awards, sans en-têtes "Winner/Nominee".
     final_lines = winners + nominees + others
     return "\n".join(final_lines).strip()
+
+
+def format_awards_grouped(
+    awards_text: str,
+    *,
+    require_year: bool = True,
+    include_headers: bool = True,
+    sort_alpha_within_group: bool = True,
+) -> str:
+    """Nettoie et regroupe les awards en sections Winner/Nominee.
+
+    - Ajoute des entêtes (Winner/Nominee/Autres) si demandé.
+    - Filtre les lignes sans année si require_year=True.
+    - Trie alphabétiquement dans chaque groupe si demandé.
+    """
+    if not awards_text or not isinstance(awards_text, str):
+        return ""
+
+    cleaned = clean_awards_field(awards_text)
+    if not cleaned:
+        return ""
+
+    lines = [l.strip() for l in cleaned.splitlines() if l.strip()]
+
+    def _extract(line: str) -> Tuple[Optional[int], str, str, str]:
+        # year, org, category, status
+        m = re.match(
+            r'^\s*(\d{4})\s+(.*?)\s*-\s*(.+?)(?:\s*\[(Winner|Nominee|Nomine|Nomin(?:ee|e)?)\])?\s*$',
+            line,
+            re.I,
+        )
+        if m:
+            year = int(m.group(1))
+            org = (m.group(2) or "").strip()
+            category = (m.group(3) or "").strip()
+            status = (m.group(4) or "").strip().title()
+            if status and status.lower().startswith('nomin'):
+                status = 'Nominee'
+            return year, org, category, status
+        m2 = re.match(r'^\s*(\d{4})\s*[-–]\s*(.+?)(?:\s*\[(Winner|Nominee|Nomine|Nomin(?:ee|e)?)\])?\s*$', line, re.I)
+        if m2:
+            year = int(m2.group(1))
+            category = (m2.group(2) or "").strip()
+            status = (m2.group(3) or "").strip().title()
+            if status and status.lower().startswith('nomin'):
+                status = 'Nominee'
+            return year, "", category, status
+        y = re.search(r'\b(19|20)\d{2}\b', line)
+        year = int(y.group(0)) if y else None
+        st = ""
+        if re.search(r'\[\s*winner\s*\]', line, re.I):
+            st = "Winner"
+        elif re.search(r'\[\s*(nominee|nomine|nomin)\s*\]', line, re.I):
+            st = "Nominee"
+        return year, "", line.strip(), st
+
+    winners: List[str] = []
+    nominees: List[str] = []
+    others: List[str] = []
+    for l in lines:
+        year, _org, _category, status = _extract(l)
+        if require_year and year is None:
+            continue
+        sl = (status or "").lower()
+        if sl == 'winner':
+            winners.append(l)
+        elif sl == 'nominee':
+            nominees.append(l)
+        else:
+            others.append(l)
+
+    def _chrono_key(line: str):
+        year, org, category, _status = _extract(line)
+        return (
+            int(year or 9999),
+            (org or '').lower(),
+            re.sub(r'\s+', ' ', (category or '').lower()).strip(),
+            line.lower(),
+        )
+
+    if sort_alpha_within_group:
+        # Tri chronologique demandé (par année), puis org/catégorie
+        winners.sort(key=_chrono_key)
+        nominees.sort(key=_chrono_key)
+        others.sort(key=_chrono_key)
+
+    def _drop_inline_status_suffix(line: str) -> str:
+        # Les entêtes de section portent déjà le statut.
+        return re.sub(
+            r"\s*\[\s*(Winner|Nominee|Nomine|Nomin(?:ee|e)?)\s*\]\s*$",
+            "",
+            (line or "").strip(),
+            flags=re.I,
+        ).strip()
+
+    if not include_headers:
+        return "\n".join(winners + nominees + others).strip()
+
+    out: List[str] = []
+    if winners:
+        out.append("Winner")
+        out.extend([_drop_inline_status_suffix(x) for x in winners])
+        out.append("")
+    if nominees:
+        out.append("Nomine")
+        out.extend([_drop_inline_status_suffix(x) for x in nominees])
+        out.append("")
+    if others:
+        out.append("Autres")
+        out.extend([_drop_inline_status_suffix(x) for x in others])
+        out.append("")
+
+    return "\n".join(out).strip()
 

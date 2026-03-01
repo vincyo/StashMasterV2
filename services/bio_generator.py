@@ -281,8 +281,8 @@ class BioGenerator:
         
         # Si pas de clé Gemini, utiliser fallback immédiatement
         if not self.gemini_key:
-            from utils.normalizer import clean_awards_field
-            return clean_awards_field(raw_awards)
+            from utils.normalizer import format_awards_grouped
+            return format_awards_grouped(raw_awards)
         
         prompt = f"""Nettoie et formate cette liste d'awards de performer adulte.
 
@@ -302,13 +302,15 @@ Retourne UNIQUEMENT la liste nettoyée, une ligne par award, sans explication.""
         try:
             cleaned = self._call_gemini(prompt, use_search=False)
             if cleaned and len(cleaned) > 20:  # Validation minimale
-                return cleaned
+                from utils.normalizer import format_awards_grouped
+                # Post-traitement robuste: entêtes + année obligatoire + tri alpha
+                return format_awards_grouped(cleaned)
         except Exception as e:
             print(f"[GEMINI] Erreur nettoyage awards : {e}")
         
         # Fallback sur regex
-        from utils.normalizer import clean_awards_field
-        return clean_awards_field(raw_awards)
+        from utils.normalizer import format_awards_grouped
+        return format_awards_grouped(raw_awards)
 
 
 
@@ -320,14 +322,35 @@ Retourne UNIQUEMENT la liste nettoyée, une ligne par award, sans explication.""
         ceremonies = set()
         wins = []
         nom_count = 0
+
+        section_status = ""  # "Winner" | "Nominee" | "" (autres/inconnu)
+
+        def _header_to_status(line: str) -> Optional[str]:
+            l = (line or "").strip().casefold()
+            if l == "winner":
+                return "Winner"
+            if l in ("nominee", "nomine", "nominé"):
+                return "Nominee"
+            if l in ("autres", "others", "other"):
+                return ""
+            return None
         
         for line in lines:
             # Ignorer les lignes vides ou trop courtes
             if len(line) < 5:
                 continue
+
+            hs = _header_to_status(line)
+            if hs is not None:
+                section_status = hs
+                continue
             
             # Pattern pour nouveau format: "2015 AVN Award - Category [Status]"
-            m = re.match(r'^(\d{4})\s+([A-Za-z\s]+Award)\s*-\s*(.+?)\s*(?:\[(Winner|Nominee)\])?$', line, re.I)
+            m = re.match(
+                r'^(\d{4})\s+([A-Za-z\s]+Award)\s*-\s*(.+?)\s*(?:\[(Winner|Nominee|Nomine|Nomin(?:ee|e)?)\])?$',
+                line,
+                re.I,
+            )
             if m:
                 year, org, category, status = m.groups()
                 ceremonies.add(org.strip())
@@ -335,6 +358,10 @@ Retourne UNIQUEMENT la liste nettoyée, une ligne par award, sans explication.""
                 # Nettoyer la catégorie (retirer œuvre entre parenthèses pour le résumé)
                 category = re.sub(r'\s*\([^)]+\)', '', category).strip()
                 
+                # Si la ligne n'a pas de tag [Status], inférer via l'entête de section.
+                if (not status) and section_status:
+                    status = section_status
+
                 if status and 'winner' in status.lower():
                     wins.append(f"{category} ({year})")
                 else:
@@ -342,10 +369,12 @@ Retourne UNIQUEMENT la liste nettoyée, une ligne par award, sans explication.""
             
             # Ancien format pour compatibilité : "2015 - Nominee: Category"
             else:
-                old_m = re.match(r'^(\d{4})\s*[-–]\s*(Winner|Nominee)\s*:\s*(.+)$', line, re.I)
+                old_m = re.match(r'^(\d{4})\s*[-–]\s*(Winner|Nominee|Nomine|Nomin(?:ee|e)?)\s*:\s*(.+)$', line, re.I)
                 if old_m:
                     year, status, category = old_m.groups()
                     category = re.sub(r'\s*\([^)]+\)', '', category).strip()
+                    if (not status) and section_status:
+                        status = section_status
                     if 'winner' in status.lower():
                         wins.append(f"{category} ({year})")
                     else:

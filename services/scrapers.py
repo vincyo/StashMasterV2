@@ -244,24 +244,92 @@ class IAFDScraper(ScraperBase):
                 # IAFD affiche souvent "Yes" ou "No"
                 data["fake_tits"] = val
 
-        # --- Awards (onglet dédié) ---
-        awards_div = soup.find("div", id="awards")
-        if awards_div:
-            # Essayer de récupérer tous les awards depuis la page dédiée
-            m = re.search(r'id=([a-f0-9-]+)', url)
-            if m:
-                awards_url = f"https://www.iafd.com/awards.asp?id={m.group(1)}"
-                awards_soup = _fetch(awards_url)
-                if awards_soup:
-                    full_awards_div = awards_soup.find("div", id="awards")
-                    if full_awards_div:
-                        data["awards"] = self._parse_awards(full_awards_div)
-                    else:
-                        data["awards"] = self._parse_awards(awards_div)
-                else:
-                    data["awards"] = self._parse_awards(awards_div)
-            else:
-                data["awards"] = self._parse_awards(awards_div)
+        # --- Awards (détection automatique) ---
+        # Objectif: si la page IAFD est trouvée, tenter systématiquement de trouver
+        # les awards (via lien awards.asp?id=... ou fallback id=... dans l'URL).
+        awards_target_div = soup.find("div", id="awards")
+
+        awards_id = ""
+        awards_link = soup.find("a", href=re.compile(r"awards\.asp\?id=[a-z0-9-]{8,}", re.I))
+        if awards_link and awards_link.get("href"):
+            href = awards_link.get("href", "")
+            m_link = re.search(r'(?:[?&]|/)id=([a-z0-9-]{8,})\b', href, re.I)
+            if m_link:
+                awards_id = m_link.group(1)
+
+        if not awards_id:
+            # Fallback: profils IAFD peuvent être en /id=... ou /perfid=...
+            # Le format id=GUID permet de construire directement awards.asp?id=GUID.
+            # Important: ne pas matcher "perfid=..." ; on veut seulement un vrai paramètre/path id
+            m_url = re.search(r'(?:[?&]|/)id=([a-z0-9-]{8,})\b', url, re.I)
+            if m_url:
+                awards_id = m_url.group(1)
+
+        if not awards_id and re.search(r'perfid=', url, re.I):
+            # Fallback auto: résoudre perfid -> id via la page de recherche IAFD.
+            # Cela évite la dépendance au lien awards quand la page profil est incomplète.
+            try:
+                perfid_match = re.search(r'perfid=([^/&?]+)', url, re.I)
+                perfid = (perfid_match.group(1) if perfid_match else '').strip()
+
+                parsed = urlparse(url)
+                slug = (parsed.path or '').rstrip('/').split('/')[-1].replace('.htm', '')
+                query_name = (slug or perfid).replace('_', ' ').replace('-', ' ').strip()
+
+                if query_name:
+                    search_q = re.sub(r'\s+', '+', query_name)
+                    search_url = (
+                        "https://www.iafd.com/results.asp"
+                        f"?searchtype=comprehensive&searchstring={search_q}"
+                    )
+                    search_soup = _fetch(search_url)
+                    if search_soup:
+                        candidates = []
+                        for a in search_soup.find_all('a', href=True):
+                            href = a.get('href', '') or ''
+                            m_id = re.search(r'person\.rme/id=([a-z0-9-]{8,})\b', href, re.I)
+                            if not m_id:
+                                continue
+                            pid = m_id.group(1)
+                            txt = _clean(a.get_text(separator=' ')).lower()
+                            hay = f"{href.lower()} {txt}"
+
+                            score = 0
+                            if perfid and perfid.lower() in hay:
+                                score += 5
+                            for tok in [t for t in query_name.lower().split() if len(t) >= 3]:
+                                if tok in hay:
+                                    score += 1
+                            candidates.append((score, pid))
+
+                        if candidates:
+                            candidates.sort(key=lambda x: x[0], reverse=True)
+                            best_score, best_id = candidates[0]
+                            if best_id and best_score >= 1:
+                                awards_id = best_id
+            except Exception:
+                pass
+
+        if awards_id:
+            awards_url = f"https://www.iafd.com/awards.asp?id={awards_id}"
+            awards_soup = _fetch(awards_url)
+            if awards_soup:
+                full_awards_div = awards_soup.find("div", id="awards")
+                if full_awards_div:
+                    awards_target_div = full_awards_div
+
+            # Fallback robuste: certains profils exposent les awards directement
+            # sur person.rme/id=... même quand awards.asp retourne vide/404.
+            if not awards_target_div:
+                person_id_url = f"https://www.iafd.com/person.rme/id={awards_id}"
+                person_id_soup = _fetch(person_id_url)
+                if person_id_soup:
+                    person_awards_div = person_id_soup.find("div", id="awards")
+                    if person_awards_div:
+                        awards_target_div = person_awards_div
+
+        if awards_target_div:
+            data["awards"] = self._parse_awards(awards_target_div)
 
         # --- Liens Sociaux / Externes ---
         ext_links = []
@@ -1427,8 +1495,8 @@ class DataMerger:
         "bio_raw":      ["TheNude", "FreeOnes", "XXXBios", "IAFD"],
         "details":      ["TheNude", "FreeOnes", "XXXBios", "IAFD"],
 
-        # Awards : FreeOnes est souvent le plus propre, XXXBios utile en complément
-        "awards":       ["FreeOnes", "XXXBios", "IAFD", "TheNude"],
+        # Awards : prioriser IAFD (source la plus structurée pour Winner/Nominee + année)
+        "awards":       ["IAFD", "FreeOnes", "XXXBios", "TheNude"],
         
         # Tattoos : IAFD champion (90% descriptions détaillées), TheNude 2ème (80%)
         "tattoos":      ["IAFD", "TheNude", "FreeOnes", "XXXBios"],

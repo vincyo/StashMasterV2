@@ -1,5 +1,5 @@
 import re
-from typing import Iterable, Optional, Tuple
+from typing import Iterable, Tuple
 from urllib.parse import urlparse
 
 import requests
@@ -25,9 +25,14 @@ def is_interview_url(url: str) -> bool:
         return True
 
     # Domain hints where interviews are common
-    if (domain == "barelist.com" or domain.endswith(".barelist.com")) and "interview" in url.lower():
+    if (
+        (domain == "barelist.com" or domain.endswith(".barelist.com"))
+        and "interview" in url.lower()
+    ):
         return True
-    if domain.endswith("adultdvdtalk.com") and ("interview" in domain or "interview" in url.lower()):
+    if domain.endswith("adultdvdtalk.com") and (
+        "interview" in domain or "interview" in url.lower()
+    ):
         return True
 
     return False
@@ -144,7 +149,11 @@ def extract_interview_text(url: str, timeout: int = 15) -> Tuple[str, str]:
         return "", ""
 
 
-def build_interview_context(urls: Iterable[str], max_pages: int = 2, max_chars: int = 2500) -> str:
+def build_interview_context(
+    urls: Iterable[str],
+    max_pages: int = 2,
+    max_chars: int = 2500,
+) -> str:
     """Build a compact context block from interview pages.
 
     - Limits pages to avoid slowdowns.

@@ -592,9 +592,33 @@ class URLOptimizer:
         "babesrater.com",
         "celebmuse.com",
         "cherrypimps.com",
+
+        # Profils additionnels observés (pages /model, /pornstars-*, etc.)
+        "thenude.eu",
+        "vrbangers.com",
+        "twistys.com",
+        "eroticbeauties.net",
+        "xillimite.com",
+        "kink.com",
+        "babes.com",
+        "babesnetwork.com",
+        "sweetheartvideo.com",
+        "nfbusty.com",
+        "socialmediapornstars.com",
+        "pics-x.com",
+        "bellesafilms.com",
     }
 
     ALLOWED_PROFILE_DOMAINS = GROUP1_PROFILE_DOMAINS | GROUP2_PROFILE_DOMAINS | OTHER_PROFILE_DOMAINS
+
+    def _get_priority(self, domain: str) -> int:
+        """Return priority score for a domain (lower is better)."""
+        d = (domain or "").lower()
+        best = None
+        for root, score in self.PRIORITY_MAP.items():
+            if self._domain_matches(d, root):
+                best = score if best is None else min(best, score)
+        return best if best is not None else 999
 
     @staticmethod
     def _domain_matches(domain: str, root: str) -> bool:
@@ -652,9 +676,9 @@ class URLOptimizer:
         if _is_interview_url():
             return True
 
-        # Profils: n'accepter que les domaines attendus du workflow
-        if domain not in self.ALLOWED_PROFILE_DOMAINS:
-            return False
+        # Profils: on n'impose plus une allowlist stricte.
+        # Objectif: conserver tout ce qui n'est pas une galerie/scene/tracking,
+        # et laisser la sélection "top 50" faire un choix logique.
 
         # Validation stricte pour certains domaines
         if domain == "xxxbios.com":
@@ -670,9 +694,31 @@ class URLOptimizer:
             if not re.search(r'/(?:[^/]*_)?\d+\.htm$', path, re.I):
                 return False
 
+        if domain == "thenude.eu":
+            # Même logique que thenude.com
+            if not re.search(r'/(?:[^/]*_)?\d+\.htm$', path, re.I):
+                return False
+
         if domain in ("freeones.com", "freeones.xxx"):
-            # Profil FreeOnes attendu : /slug ou /slug/bio
-            if not re.search(r'^/[a-z0-9][a-z0-9-]+(?:/bio)?$', path, re.I):
+            # Garder les pages performer et discussions pertinentes.
+            # Exemples valides:
+            # - /abigail-mac/bio
+            # - /2257
+            # - /forums/threads/abigail-mac.641356
+            allowed_freeones = (
+                re.search(r'^/\d+/?$', path, re.I)
+                or re.search(r'^/[a-z0-9][a-z0-9-]+(?:/bio)?/?$', path, re.I)
+                or re.search(r'^/forums/threads/[a-z0-9][a-z0-9-]*\.\d+/?$', path, re.I)
+            )
+            if not allowed_freeones:
+                return False
+
+            # Rejeter explicitement les pages génériques FreeOnes
+            if re.search(
+                r'^/(?:about-us|blog|cams|chat|contact|disclaimer|dmca|games|reviews|vod|performer-add|submit-new-link|friends-of-freeones|freeones-premium-photos-and-videos)(?:/|$)',
+                path,
+                re.I,
+            ):
                 return False
             
         if domain == "babepedia.com" and "/babe/" not in url:
@@ -735,6 +781,65 @@ class URLOptimizer:
         if domain == "dorcelvision.com":
             # ex: /en/pornstars-women/abigail-mac
             if not re.search(r'^/(?:[a-z]{2}/)?pornstars-[^/]+/.+/?$', path, re.I):
+                return False
+
+        if domain == "xillimite.com":
+            # ex: /en/pornstars-women/abigail-mac
+            if not re.search(r'^/(?:[a-z]{2}/)?pornstars-[^/]+/.+/?$', path, re.I):
+                return False
+
+        if domain == "vrbangers.com":
+            # ex: /model/abigail-mac
+            if not re.search(r'^/model/[a-z0-9][a-z0-9-]+/?$', path, re.I):
+                return False
+
+        if domain == "eroticbeauties.net":
+            # ex: /model/abigail-mac
+            if not re.search(r'^/model/[a-z0-9][a-z0-9-]+/?$', path, re.I):
+                return False
+
+        if domain == "twistys.com":
+            # ex: /model/1779/abigail-mac
+            if not re.search(r'^/model/\d+/.+/?$', path, re.I):
+                return False
+
+        if domain == "kink.com":
+            # ex: /model/48310
+            if not re.search(r'^/model/\d+(?:/[^/]+)?/?$', path, re.I):
+                return False
+
+        if domain in ("babes.com", "babesnetwork.com"):
+            # ex: /model/1779  or /model/1779/Abigail-Mac
+            # ex: /tour/models/view/id/1779
+            if not (
+                re.search(r'^/model/\d+(?:/[^/]+)?/?$', path, re.I)
+                or re.search(r'^/tour/models/view/id/\d+/?$', path, re.I)
+            ):
+                return False
+
+        if domain == "sweetheartvideo.com":
+            # ex: /model/48430/shv
+            if not re.search(r'^/model/\d+/[^/]+/?$', path, re.I):
+                return False
+
+        if domain == "nfbusty.com":
+            # ex: /model/profile/6252
+            if not re.search(r'^/model/profile/\d+/?$', path, re.I):
+                return False
+
+        if domain == "socialmediapornstars.com":
+            # ex: /pornstar-abigailmac-<hash>.html
+            if not re.search(r'^/pornstar-[a-z0-9_-]+\.html$', path, re.I):
+                return False
+
+        if domain == "pics-x.com":
+            # ex: /pornstar/9053
+            if not re.search(r'^/pornstar/\d+/?$', path, re.I):
+                return False
+
+        if domain == "bellesafilms.com":
+            # ex: /model/57946
+            if not re.search(r'^/model/\d+/?$', path, re.I):
                 return False
 
         if domain == "intimatepov.com":
@@ -809,8 +914,12 @@ class URLOptimizer:
                 return False
 
         if domain == "cherrypimps.com":
-            # ex: /models/AbigailMac.html (on rejette trailers)
-            if not re.search(r'^/models/[^/]+\.html$', path, re.I):
+            # ex: /models/AbigailMac.html
+            # ex: /trailers/17195-abigailmac-giadimarco.html
+            if not (
+                re.search(r'^/models/[^/]+\.html$', path, re.I)
+                or re.search(r'^/trailers/\d+-[a-z0-9-]+\.html$', path, re.I)
+            ):
                 return False
 
         # Rejeter pages génériques sans profil
@@ -820,16 +929,32 @@ class URLOptimizer:
         # Rejeter les pages manifestement non-profil (scènes, galeries, tracking...)
         bad_path_tokens = [
             '/scene', '/scenes', '/video', '/videos', '/gallery', '/galleries',
-            '/image', '/images', '/pics', '/photo', '/photos', '/track/', '/updates',
-            '/category/', '/tag/', '/post/', '/episode/', '/clip/', '/clips/',
-            '/trailer', '/trailers'
+            '/image', '/images', '/picture', '/pictures', '/pics', '/photo', '/photos', '/updates',
+            '/tag/', '/post/', '/episode/', '/clip/', '/clips/',
+            '/privacy', '/privacy_policy', '/terms', '/terms-of-use', '/cookie',
+            '/feed', '/channel', '/login', '/signup', '/subscribe'
         ]
         if any(tok in path for tok in bad_path_tokens):
             return False
 
+        # Les URLs d'affiliation /track/ peuvent quand même pointer vers un profil model.
+        # On les garde seulement si elles contiennent explicitement un segment profil.
+        if '/track/' in path and not re.search(
+            r'/(?:model|models|pornstar|performer|star|talent)/',
+            path,
+            re.I,
+        ):
+            return False
+
         # Pour les domaines non stricts, exiger un minimum de correspondance au nom performer
         # pour limiter les pages hors-sujet.
-        strict_domains = {'iafd.com', 'thenude.com', 'babepedia.com', 'boobpedia.com', 'xxxbios.com', 'freeones.com', 'freeones.xxx'}
+        strict_domains = {
+            'iafd.com', 'thenude.com', 'thenude.eu', 'babepedia.com', 'boobpedia.com',
+            'xxxbios.com', 'freeones.com', 'freeones.xxx',
+            # Domaines à pattern ID fiable (pas besoin du nom dans l'URL)
+            'kink.com', 'babes.com', 'babesnetwork.com', 'nfbusty.com',
+            'pics-x.com', 'bellesafilms.com', 'sweetheartvideo.com'
+        }
         if performer_name and domain not in strict_domains:
             name = performer_name.strip().lower()
             tokens = [t for t in re.split(r'\s+', name) if len(t) >= 3]
@@ -903,25 +1028,12 @@ class URLOptimizer:
 
             cleaned_set.add(url)
 
-        # 1 URL par domaine dans chaque groupe (profil / réseaux sociaux)
-        def keep_one_per_domain(items: List[Dict[str, str]]) -> List[Dict[str, str]]:
-            best_by_domain: Dict[str, Dict[str, str]] = {}
-            for item in items:
-                dom = item["domain"]
-                # garder la première vue (préserve les URLs prioritaires validées)
-                if dom not in best_by_domain:
-                    best_by_domain[dom] = item
-            return list(best_by_domain.values())
+        # Conserver toutes les URLs valides (non-galerie) pour permettre
+        # une sélection "top 50" plus logique.
+        # Groupe profils, puis interviews, puis réseaux sociaux.
+        profile_candidates.sort(key=lambda x: (self._get_priority(x['domain']), x['url'].lower()))
+        interview_candidates.sort(key=lambda x: (self._get_priority(x['domain']), x['url'].lower()))
+        social_candidates.sort(key=lambda x: (self._get_priority(x['domain']), x['url'].lower()))
 
-        profile_unique = keep_one_per_domain(profile_candidates)
-        interview_unique = keep_one_per_domain(interview_candidates)
-        social_unique = keep_one_per_domain(social_candidates)
-
-        # Groupe 1+2 (profils), Groupe 3 (interviews), puis réseaux sociaux.
-        # Tri alphabétique à l'intérieur de chaque groupe.
-        profile_unique.sort(key=lambda x: x['url'].lower())
-        interview_unique.sort(key=lambda x: x['url'].lower())
-        social_unique.sort(key=lambda x: x['url'].lower())
-
-        final_items = profile_unique + interview_unique + social_unique
+        final_items = profile_candidates + interview_candidates + social_candidates
         return [item['url'] for item in final_items[:limit]]
