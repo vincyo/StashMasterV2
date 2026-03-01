@@ -125,6 +125,8 @@ def clean_award_text(raw_text: str) -> str:
         # Enlever les doubles brackets vides "[]"
         text = re.sub(r'\[\s*\]', '', text).strip()
         text = re.sub(r'\(\s*\)', '', text).strip()
+        # Normaliser "YYYY ORG -" → "YYYY - ORG -" (ajouter tiret manquant après l'année)
+        text = re.sub(r'^(\d{4})\s+([^-\s])', r'\1 - \2', text)
         return text
     
     # 1. Séparer les blocs collés (ex: "Awards2015" -> "Awards 2015")
@@ -225,9 +227,9 @@ def clean_award_text(raw_text: str) -> str:
     if org:
         # Avec organisation
         if status:
-            result = f"{year} {org} - {text} [{status}]" if year else f"{org} - {text} [{status}]"
+            result = f"{year} - {org} - {text} [{status}]" if year else f"{org} - {text} [{status}]"
         else:
-            result = f"{year} {org} - {text}" if year else f"{org} - {text}"
+            result = f"{year} - {org} - {text}" if year else f"{org} - {text}"
     else:
         # Sans organisation - juste année et catégorie
         if status:
@@ -385,16 +387,20 @@ def clean_awards_field(awards_text: str) -> str:
             
             if already_formatted:
                 # Extraire le préfixe strict (année + org si présente + Award)
-                prefix = already_formatted.group(1).strip()
+                raw_prefix = already_formatted.group(1).strip()
+                # Normaliser "YYYY ORG -" → "YYYY - ORG -" dans le préfixe
+                prefix = re.sub(r'^(\d{4})\s+([^-\s])', r'\1 - \2', raw_prefix)
                 
                 for subline in sublines:
                     subline = subline.strip()
                     if len(subline) < 10:
                         continue
                     
-                    # Si commence par le préfixe, c'est la première partie, la garder telle quelle
-                    if subline.startswith(prefix):
-                        # Juste normaliser les espaces
+                    # Normaliser la sous-ligne si elle commence par l'ancien préfixe
+                    if subline.startswith(raw_prefix):
+                        subline = prefix + subline[len(raw_prefix):]
+                        cleaned_lines.append(re.sub(r'\s+', ' ', subline).strip())
+                    elif subline.startswith(prefix):
                         cleaned_lines.append(re.sub(r'\s+', ' ', subline).strip())
                     else:
                         # Ajouter le préfixe aux parties suivantes

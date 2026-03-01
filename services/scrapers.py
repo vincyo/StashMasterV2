@@ -64,8 +64,8 @@ def _fetch_with_curl(url: str) -> Optional[str]:
         result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='ignore')
         if result.returncode == 0 and result.stdout:
             return result.stdout
-    except Exception as e:
-        print(f"[SCRAPER] Échec fallback curl : {e}")
+    except Exception:
+        pass
     return None
 
 
@@ -74,6 +74,7 @@ def _fetch(url: str) -> Optional[BeautifulSoup]:
     try:
         resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
         resp.raise_for_status()
+        print(f"[SCRAPER] SUCCES: {url}")
         return BeautifulSoup(resp.text, "html.parser")
     except Exception as e:
         # Fallback pour les erreurs 403 (Forbidden) fréquentes sur IAFD/Babepedia
@@ -82,13 +83,12 @@ def _fetch(url: str) -> Optional[BeautifulSoup]:
         is_forbidden = status_code == 403
         
         if is_forbidden or "403" in str(e):
-            print(f"[SCRAPER] 403 détecté sur {url}, tentative fallback curl...")
             html = _fetch_with_curl(url)
             if html:
-                print(f"[SCRAPER] Succès fallback curl pour {url}")
+                print(f"[SCRAPER] SUCCES: {url}")
                 return BeautifulSoup(html, "html.parser")
         
-        print(f"[SCRAPER] Erreur fetch {url} : {e}")
+        print(f"[SCRAPER] ECHEC: {url}")
         return None
 
 
@@ -1449,10 +1449,12 @@ class ScraperOrchestrator:
             if progress_callback:
                 progress_callback(i, total, scraper.SOURCE_NAME)
                 
-            print(f"[ORCHESTRATOR] Scraping {scraper.SOURCE_NAME} : {url}")
             result = scraper.scrape(url)
             if result:
+                print(f"[ORCHESTRATOR] SUCCES: {scraper.SOURCE_NAME}")
                 results.append(result)
+            else:
+                print(f"[ORCHESTRATOR] ECHEC: {scraper.SOURCE_NAME}")
         
         if progress_callback:
             progress_callback(total, total, "Terminé")

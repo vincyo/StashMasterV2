@@ -168,19 +168,31 @@ class URLManager:
             
         validated_others = []
         unique_seen = set()
+        seen_other_domains: set = set()
         
+        def _base_domain(u: str) -> str:
+            m = re.search(r'https?://(?:www\.)?([^/]+)', u.lower())
+            return m.group(1) if m else u.lower()
+
         # Ajouter les prioritaires au set pour éviter doublons
+        # + seed les domaines pour éviter doublons par domaine dans les "autres"
         for purl in priority_slots:
             if purl:
                 unique_seen.add(purl)
+                seen_other_domains.add(_base_domain(purl))
 
         for url in other_urls:
             if url in unique_seen:
+                continue
+            bdom = _base_domain(url)
+            # Garder au plus une URL par domaine dans les "autres"
+            if bdom in seen_other_domains:
                 continue
             
             if self.is_url_reachable(url):
                 validated_others.append(url)
                 unique_seen.add(url)
+                seen_other_domains.add(bdom)
         
         # 5. Construction liste finale
         final_list = []
@@ -703,22 +715,24 @@ class URLOptimizer:
             # Garder les pages performer et discussions pertinentes.
             # Exemples valides:
             # - /abigail-mac/bio
-            # - /2257
             # - /forums/threads/abigail-mac.641356
-            allowed_freeones = (
-                re.search(r'^/\d+/?$', path, re.I)
-                or re.search(r'^/[a-z0-9][a-z0-9-]+(?:/bio)?/?$', path, re.I)
-                or re.search(r'^/forums/threads/[a-z0-9][a-z0-9-]*\.\d+/?$', path, re.I)
-            )
-            if not allowed_freeones:
-                return False
+            # NB: /2257 est la page compliance (retirée), /pornstars-born-in-X sont des listings
 
-            # Rejeter explicitement les pages génériques FreeOnes
+            # Rejeter explicitement les pages génériques / listings FreeOnes
             if re.search(
-                r'^/(?:about-us|blog|cams|chat|contact|disclaimer|dmca|games|reviews|vod|performer-add|submit-new-link|friends-of-freeones|freeones-premium-photos-and-videos)(?:/|$)',
+                r'^/(?:2257|about-us|blog|cams|chat|contact|disclaimer|dmca|games|reviews|vod|performer-add|submit-new-link|friends-of-freeones|freeones-premium-photos-and-videos)(?:/|$)',
                 path,
                 re.I,
             ):
+                return False
+            # Rejeter les pages de catégorie/listing (ex: /pornstars-born-in-2006, /pornstar-month)
+            if re.search(r'^/pornstars?[- _]', path, re.I):
+                return False
+
+            allowed_freeones = (
+                re.search(r'^/[a-z0-9][a-z0-9-]+(?:/bio)?/?$', path, re.I)
+            )
+            if not allowed_freeones:
                 return False
             
         if domain == "babepedia.com" and "/babe/" not in url:
