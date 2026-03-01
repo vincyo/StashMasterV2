@@ -618,6 +618,53 @@ class TheNudeScraper(ScraperBase):
             elif key == "Agencies":
                 data["agency"] = val
 
+        # --- Biographies (div.bio-more) ---
+        # Structure TheNude : <p itemprop="description"></p><h5>STUDIO biography:</h5>
+        # texte brut (NavigableString) ...<p></p>
+        bio_div = soup.find("div", class_="bio-more")
+        if bio_div:
+            bios_by_studio = []
+            current_studio = ""
+            current_chunks: list = []
+            for child in bio_div.children:
+                child_name = getattr(child, "name", None)
+                if child_name == "h5":
+                    # Flush previous block
+                    txt = _clean(" ".join(current_chunks))
+                    if txt and len(txt) > 80:
+                        bios_by_studio.append((current_studio, txt))
+                    current_studio = _clean(child.get_text()).rstrip(":").strip()
+                    current_chunks = []
+                elif child_name is None:
+                    # NavigableString — raw bio text
+                    t = _clean(str(child))
+                    if t and len(t) > 20:
+                        current_chunks.append(t)
+                elif child_name == "p":
+                    # Sometimes content is inside <p>
+                    t = _clean(child.get_text())
+                    if t and len(t) > 20:
+                        current_chunks.append(t)
+            # Flush last block
+            txt = _clean(" ".join(current_chunks))
+            if txt and len(txt) > 80:
+                bios_by_studio.append((current_studio, txt))
+
+            if bios_by_studio:
+                # Priorité : THENUDE own bio first, then longest studio bio
+                thenude_bio = next((b for s, b in bios_by_studio if "thenude" in s.lower()), None)
+                other_sorted = sorted(
+                    [(s, b) for s, b in bios_by_studio if "thenude" not in s.lower()],
+                    key=lambda x: len(x[1]), reverse=True
+                )
+                parts = []
+                if thenude_bio:
+                    parts.append(thenude_bio)
+                if other_sorted:
+                    parts.append(other_sorted[0][1])
+                if parts:
+                    data["bio_raw"] = "\n\n".join(parts[:2])
+
         # --- Liens Externes ---
         ext_links = []
         for a in soup.find_all("a", href=True):
@@ -1103,10 +1150,10 @@ class XXXBiosScraper(ScraperBase):
         def _process_kv(k, v) -> bool:
             if not v:
                 return False
-            if k in ("Born", "Date of Birth", "Birthday"):
+            if k in ("Born", "Date of Birth", "Birthday", "Date of Birth"):
                 data["birthdate"] = v
                 return True
-            elif k in ("Birthplace", "Place of Birth"):
+            elif k in ("Birthplace", "Place of Birth", "Hometown", "City of Birth", "Origin"):
                 data["birthplace"] = v
                 return True
             elif k in ("Height",):
@@ -1118,26 +1165,26 @@ class XXXBiosScraper(ScraperBase):
             elif k in ("Measurements",):
                 data["measurements"] = v
                 return True
-            elif k in ("Hair Color", "Hair"):
+            elif k in ("Hair Color", "Hair Colour", "Hair"):
                 data["hair_color"] = v
                 return True
-            elif k in ("Eye Color", "Eyes"):
+            elif k in ("Eye Color", "Eye Colour", "Eyes"):
                 data["eye_color"] = v
                 return True
-            elif k in ("Boobs", "Breast Size", "Breasts"):
+            elif k in ("Boobs", "Breast Size", "Breasts", "Bra Size", "Cup Size"):
                 data["fake_tits"] = v
                 return True
-            elif k in ("Ethnicity",):
+            elif k in ("Ethnicity", "Race"):
                 data["ethnicity"] = v
                 return True
             elif k in ("Nationality", "Country"):
                 data["country"] = v
                 return True
-            elif k in ("Years Active", "Career"):
+            elif k in ("Years Active", "Career", "Active Since", "Active"):
                 data["career_length"] = v
                 return True
-            elif k in ("Also Known As", "AKA", "Aliases"):
-                aliases = [a.strip() for a in re.split(r"[,\n|]", v) if a.strip()]
+            elif k in ("Also Known As", "AKA", "Aliases", "Known As", "Alias"):
+                aliases = [a.strip() for a in re.split(r"[,\n|/]", v) if a.strip()]
                 data["aliases"] = aliases
                 return True
             elif k in ("Tattoos", "Tattoo"):
@@ -1145,6 +1192,18 @@ class XXXBiosScraper(ScraperBase):
                 return True
             elif k in ("Piercings", "Piercing"):
                 data["piercings"] = v
+                return True
+            elif k in ("Star Sign", "Zodiac", "Zodiac Sign", "Star sign"):
+                data["star_sign"] = v
+                return True
+            elif k in ("Number of Scenes", "Scenes", "Scene Count"):
+                data["scene_count"] = v
+                return True
+            elif k in ("Pubic Hair", "Pubic"):
+                data["pubic_hair"] = v
+                return True
+            elif k in ("Shoe Size",):
+                data["shoe_size"] = v
                 return True
 
             return False
@@ -1255,11 +1314,11 @@ class XXXBiosScraper(ScraperBase):
                         award_lines.append("- " + text)
 
             if bio_paragraphs:
-                data["bio_raw"] = "\n\n".join(bio_paragraphs[:8])
+                data["bio_raw"] = "\n\n".join(bio_paragraphs[:20])
             if trivia_lines:
-                data["trivia"] = "\n".join(trivia_lines[:20])
+                data["trivia"] = "\n".join(trivia_lines[:30])
             if award_lines:
-                data["awards"] = "\n".join(award_lines[:50])
+                data["awards"] = "\n".join(award_lines[:80])
 
             # Awards heuristique : certaines pages listent les récompenses sous "Personal Info".
             if not data.get("awards"):
@@ -1303,6 +1362,9 @@ class XXXBiosScraper(ScraperBase):
                     socials["onlyfans"] = href
                 elif _host_is(host, "facebook.com"):
                     socials["facebook"] = href
+                elif _host_is(host, "thenude.com") or _host_is(host, "babepedia.com") or _host_is(host, "iafd.com") or _host_is(host, "freeones.com"):
+                    # Liens vers d'autres sources de scraping : priorité dans discovered_urls
+                    ext_links.insert(0, href)
                 elif _host_is(host, "brazzers.com") or _host_is(host, "naughtyamerica.com") or _host_is(host, "digitalplayground.com"):
                     ext_links.append(href)
                 elif href.startswith("http") and not _host_is(host, "xxxbios.com"):

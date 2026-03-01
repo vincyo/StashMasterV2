@@ -11,10 +11,11 @@ from typing import Dict, List, Optional
 class SceneFrame(ttk.Frame):
     """Frame principal pour la gestion des scènes"""
     
-    def __init__(self, parent, scene_id: Optional[str] = None):
+    def __init__(self, parent, scene_id: Optional[str] = None, on_exit_to_selector=None):
         super().__init__(parent)
         self.scene_id = scene_id
         self.metadata = {}
+        self.on_exit_to_selector = on_exit_to_selector
         
         # Services
         from services.config_manager import ConfigManager
@@ -131,6 +132,7 @@ class SceneFrame(ttk.Frame):
         
         ttk.Button(toolbar, text="💾 Sauvegarder", command=self._save).pack(side=tk.RIGHT, padx=5)
         ttk.Button(toolbar, text="🔍 Scraper Scène", command=self._scrape).pack(side=tk.LEFT, padx=5)
+        ttk.Button(toolbar, text="← Retour sélection", command=self._exit_to_selector).pack(side=tk.LEFT, padx=5)
 
     def _load_from_stash(self):
         if not self.scene_id: return
@@ -171,6 +173,10 @@ class SceneFrame(ttk.Frame):
                 "#f8d7da": "Invalid.TCombobox"
             }
             combo.configure(style=style_map.get(color, "Normal.TCombobox"))
+
+    def _exit_to_selector(self):
+        if self.on_exit_to_selector:
+            self.on_exit_to_selector()
 
     def _scrape(self):
         messagebox.showinfo("Scraping", "Scraping de la scène à venir...")

@@ -526,8 +526,9 @@ Retourne UNIQUEMENT la liste nettoyée, une ligne par award, sans explication.""
             if bio_raw:      lines.append(f"\nBio scrapée :\n{bio_raw[:1000]}")
             if interviews_ctx:
                 lines.append(f"\nInterviews (extraits) :\n{interviews_ctx[:2500]}")
-            if stash_bio and stash_bio != bio_raw:
-                lines.append(f"\nBio actuelle dans Stash (à améliorer/enrichir) :\n{stash_bio[:1200]}")
+            # NOTE: stash_bio est intentionnellement exclu du prompt Gemini
+            # pour éviter qu'elle soit copiée mot pour mot.
+            # Elle est disponible dans l'onglet Raffiner/Fusionner (option Stash).
             lines += [
                 "",
                 "Tu peux enrichir avec tes connaissances réelles (studios, prix vérifiables, faits publics).",
@@ -762,7 +763,7 @@ Renvoie UNIQUEMENT la biographie modifiée, sans commentaires."""
             Texte à traduire : {text}
             Renvoie UNIQUEMENT la traduction, sans commentaires."""
             
-            result = self._ollama_request(model=model, prompt=prompt, timeout=60)
+            result = self._ollama_request(model=model, prompt=prompt, timeout=180)
             if result:
                 result = result.strip()
                 return result if result else text

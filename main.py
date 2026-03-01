@@ -87,10 +87,10 @@ class StashMasterApp(tk.Tk):
             frame = PerformerFrame(self, self.entity_id, on_exit_to_selector=self._return_to_selector)
             frame.pack(fill=tk.BOTH, expand=True)
         elif self.mode == "dvd":
-            frame = DVDFrame(self, self.entity_id)
+            frame = DVDFrame(self, self.entity_id, on_exit_to_selector=self._return_to_selector)
             frame.pack(fill=tk.BOTH, expand=True)
         elif self.mode == "scene":
-            frame = SceneFrame(self, self.entity_id)
+            frame = SceneFrame(self, self.entity_id, on_exit_to_selector=self._return_to_selector)
             frame.pack(fill=tk.BOTH, expand=True)
 
     def _return_to_selector(self):

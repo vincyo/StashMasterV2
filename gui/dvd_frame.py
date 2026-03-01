@@ -10,9 +10,10 @@ import threading
 from typing import Dict, List, Optional
 
 class DVDFrame(ttk.Frame):
-    def __init__(self, parent, dvd_id: Optional[str] = None):
+    def __init__(self, parent, dvd_id: Optional[str] = None, on_exit_to_selector=None):
         super().__init__(parent)
         self.dvd_id = dvd_id
+        self.on_exit_to_selector = on_exit_to_selector
         
         # Services
         from services.config_manager import ConfigManager
@@ -76,6 +77,7 @@ class DVDFrame(ttk.Frame):
         toolbar.pack(side=tk.BOTTOM, fill=tk.X)
         ttk.Button(toolbar, text="💾 Sauvegarder dans Stash", command=self._save_to_stash).pack(side=tk.RIGHT, padx=5)
         ttk.Button(toolbar, text="🔍 Tout Scraper", command=self._scrape_all).pack(side=tk.LEFT, padx=5)
+        ttk.Button(toolbar, text="← Retour sélection", command=self._exit_to_selector).pack(side=tk.LEFT, padx=5)
 
     def _setup_metadata_tab(self):
         if not self.tab_metadata: return
@@ -220,6 +222,10 @@ class DVDFrame(ttk.Frame):
         if count > 0:
             print(f"Injecté {count} URLs de scènes depuis Data18.")
             # Optionnel: Notification discrète
+
+    def _exit_to_selector(self):
+        if self.on_exit_to_selector:
+            self.on_exit_to_selector()
 
     def _save_to_stash(self):
         if not self.dvd_id: return

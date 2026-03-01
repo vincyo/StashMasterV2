@@ -46,6 +46,7 @@ class PerformerFrame(ttk.Frame):
         self.stash_data: Dict[str, Any] = {}
         self.field_vars: Dict[str, Dict[str, Any]] = {}
         self.use_fallback_sources = False  # Par défaut: sources primaires uniquement
+        self._urls_verified = False  # Dialog de vérification URLs affiché une seule fois par performer
         
         # Widgets
         self.notebook: ttk.Notebook = None # type: ignore
@@ -92,6 +93,7 @@ class PerformerFrame(ttk.Frame):
         self._bio_google_text: Optional[scrolledtext.ScrolledText] = None
         self._bio_ollama_text: Optional[scrolledtext.ScrolledText] = None
         self._bio_merge_text: Optional[scrolledtext.ScrolledText] = None
+        self._bio_existing_text: Optional[scrolledtext.ScrolledText] = None
 
         self._lbl_scrape_chars: Optional[ttk.Label] = None
         self._lbl_scrape_chars2: Optional[ttk.Label] = None
@@ -191,10 +193,14 @@ class PerformerFrame(ttk.Frame):
         # fallback legacy
         if getattr(self, 'bio_text', None):
             try:
-                return self.bio_text.get('1.0', tk.END).strip()
+                t = self.bio_text.get('1.0', tk.END).strip()
+                if t:
+                    return t
             except Exception:
                 pass
-        return ""
+
+        # Dernier recours : conserver la bio déjà dans Stash (évite d'écraser)
+        return str(getattr(self, 'stash_data', {}).get('details', '') or '')
 
     def _refresh_bio_counters(self):
         try:
@@ -635,7 +641,8 @@ class PerformerFrame(ttk.Frame):
         # --- Tab 3: Raffiner/Fusionner ---
         tab_merge = ttk.Frame(self._bio_notebook, padding=10)
         tab_merge.columnconfigure(0, weight=1)
-        tab_merge.rowconfigure(4, weight=1)
+        tab_merge.rowconfigure(4, weight=2)
+        tab_merge.rowconfigure(3, weight=1)
 
         src_box = ttk.LabelFrame(tab_merge, text=' Sources à fusionner ', padding=8)
         src_box.grid(row=0, column=0, sticky='ew', pady=(0, 8))
@@ -660,11 +667,29 @@ class PerformerFrame(ttk.Frame):
 
         actions = ttk.Frame(tab_merge)
         actions.grid(row=2, column=0, sticky='ew', pady=(0, 6))
-        ttk.Button(actions, text='🔀 Fusionner', command=self._bio_do_merge).pack(side=tk.LEFT)
+        ttk.Button(actions, text='🔀 Fusionner (Ollama)', command=self._bio_do_merge).pack(side=tk.LEFT)
         ttk.Button(actions, text='✨ Raffiner (Ollama)', command=self._bio_do_refine).pack(side=tk.LEFT, padx=6)
         ttk.Button(actions, text='✅ Appliquer → Ollama', command=self._bio_apply_merge).pack(side=tk.LEFT)
         self._merge_status = ttk.Label(actions, text='')
         self._merge_status.pack(side=tk.RIGHT)
+
+        # --- Section bio existante Stash ---
+        existing_lf = ttk.LabelFrame(tab_merge, text=' 📂 Bio existante dans Stash (non envoyée aux IA) ', padding=6)
+        existing_lf.grid(row=3, column=0, sticky='nsew', pady=(0, 6))
+        existing_lf.columnconfigure(0, weight=1)
+        existing_lf.rowconfigure(0, weight=1)
+        self._bio_existing_text = scrolledtext.ScrolledText(existing_lf, wrap=tk.WORD, height=6,
+                                                            bg='#f5f5dc', font=('Segoe UI', 9))
+        self._bio_existing_text.grid(row=0, column=0, sticky='nsew', padx=(0, 4))
+        self._bio_existing_text.config(state='disabled')
+        existing_btns = ttk.Frame(existing_lf)
+        existing_btns.grid(row=1, column=0, sticky='ew', pady=(4, 0))
+        ttk.Button(existing_btns, text='📋 Réutiliser telle quelle',
+                   command=self._bio_reuse_existing).pack(side=tk.LEFT)
+        ttk.Button(existing_btns, text='🔀 Fusionner avec sources cochées (Ollama)',
+                   command=self._bio_do_merge).pack(side=tk.LEFT, padx=6)
+        ttk.Button(existing_btns, text='✏️ Ajuster avec prompt Ollama',
+                   command=self._bio_adjust_existing_ollama).pack(side=tk.LEFT)
 
         self._bio_merge_text = scrolledtext.ScrolledText(tab_merge, wrap=tk.WORD)
         self._bio_merge_text.grid(row=4, column=0, sticky='nsew')
@@ -692,8 +717,8 @@ class PerformerFrame(ttk.Frame):
 
     def load_performer(self, performer_data: Dict[str, Any]):
         """Charge les données d'un performer dans l'interface."""
-        # 1. Pré-traitement URL Manager Interactif
-        if performer_data.get("name"):
+        # 1. Pré-traitement URL Manager Interactif — une seule fois par performer
+        if performer_data.get("name") and not self._urls_verified:
             # Récupération URLs existantes
             raw_urls = performer_data.get("urls", [])
             if isinstance(raw_urls, str):
@@ -701,18 +726,13 @@ class PerformerFrame(ttk.Frame):
             elif raw_urls is None:
                 raw_urls = []
             
-            # Lancement de la fenêtre de vérification interactive
-            # Utilisation de la classe URLVerificationDialog importée
-            if isinstance(raw_urls, str):
-                raw_urls = [u.strip() for u in raw_urls.splitlines() if u.strip()]
-            
             dlg = URLVerificationDialog(self, self.url_manager, raw_urls, performer_data["name"])
             self.wait_window(dlg)
             
             if dlg.final_urls is not None:
                 performer_data["urls"] = dlg.final_urls
                 self.use_fallback_sources = dlg.use_fallback_sources  # Store preference
-            # Sinon, on garde les URLs d'origine (si l'utilisateur a fermé sans finir ?)
+            self._urls_verified = True  # Ne plus afficher pour ce performer
 
         self.stash_data = performer_data
         
@@ -744,6 +764,7 @@ class PerformerFrame(ttk.Frame):
         
         self._refresh_bio_counters()
         self._update_raw_content(performer_data.get("bio_raw"), performer_data.get("trivia"))
+        self._refresh_existing_bio_display()
 
 
     def _bio_update_merge_chars(self):
@@ -752,6 +773,74 @@ class PerformerFrame(ttk.Frame):
         text = self._bio_merge_text.get('1.0', tk.END).strip()
         self._bio_merge_content = text
         self._lbl_merge_chars.config(text=f"Caractères : {len(text)}")
+
+    def _refresh_existing_bio_display(self):
+        """Met à jour l'affichage de la bio existante Stash dans le tab Raffiner."""
+        if not self._bio_existing_text:
+            return
+        existing = str(self.stash_data.get('details', '') or '').strip()
+        self._bio_existing_text.config(state='normal')
+        self._bio_existing_text.delete('1.0', tk.END)
+        if existing:
+            self._bio_existing_text.insert('1.0', existing)
+        else:
+            self._bio_existing_text.insert('1.0', '(aucune bio dans Stash pour ce performer)')
+        self._bio_existing_text.config(state='disabled')
+
+    def _bio_reuse_existing(self):
+        """Copie la bio existante Stash telle quelle dans la zone résultat, sans passer par l'IA."""
+        existing = str(self.stash_data.get('details', '') or '').strip()
+        if not existing:
+            messagebox.showwarning('Réutiliser', 'Aucune bio existante trouvée dans Stash pour ce performer.')
+            return
+        if not self._bio_merge_text or not self._lbl_merge_chars:
+            return
+        self._bio_merge_text.delete('1.0', tk.END)
+        self._bio_merge_text.insert('1.0', existing)
+        self._bio_merge_content = existing
+        self._lbl_merge_chars.config(text=f"Caractères : {len(existing)}")
+        if self._bio_notebook:
+            self._bio_notebook.select(3)
+
+    def _bio_adjust_existing_ollama(self):
+        """Passe la bio existante Stash à Ollama avec le prompt personnalisé pour l'ajuster."""
+        existing = str(self.stash_data.get('details', '') or '').strip()
+        if not existing:
+            messagebox.showwarning('Ajuster', 'Aucune bio existante trouvée dans Stash pour ce performer.')
+            return
+        prompt = self.bio_prompt_text.get('1.0', tk.END).strip() if getattr(self, 'bio_prompt_text', None) else ''
+        if not prompt:
+            prompt = 'Ajuste et améliore ce texte : ton professionnel, français, environ 3000 caractères, zéro liste à puces.'
+
+        def run():
+            try:
+                if self._merge_status:
+                    self.after(0, lambda: self._merge_status.config(text='Ajustement...'))
+                source_block = f"BIO EXISTANTE À AJUSTER :\n{existing}"
+                refined = self.bio_generator.refine_bio(source_block, prompt)
+                if refined and self._bio_merge_text and self._lbl_merge_chars:
+                    def apply():
+                        self._bio_merge_text.delete('1.0', tk.END)
+                        self._bio_merge_text.insert('1.0', refined)
+                        self._bio_merge_content = refined
+                        self._lbl_merge_chars.config(text=f"Caractères : {len(refined.strip())}")
+                        if self._merge_status:
+                            self._merge_status.config(text='')
+                        if self._bio_notebook:
+                            self._bio_notebook.select(3)
+                    self.after(0, apply)
+                else:
+                    self.after(0, lambda: (
+                        self._merge_status.config(text='') if self._merge_status else None,
+                        messagebox.showerror('Ollama', 'Erreur lors de l\'ajustement avec Ollama.')
+                    ))
+            except Exception:
+                self.after(0, lambda: (
+                    self._merge_status.config(text='') if self._merge_status else None,
+                    messagebox.showerror('Ollama', 'Erreur lors de l\'ajustement avec Ollama.')
+                ))
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _bio_generate_google(self):
         metadata = self._get_field_values()
@@ -916,8 +1005,8 @@ class PerformerFrame(ttk.Frame):
             messagebox.showerror("Erreur", "Impossible de charger les données du performer.")
             return
 
-        # 0. Vérification interactive des URLs AVANT de charger dans l'interface
-        if data.get("name"):
+        # 0. Vérification interactive des URLs — une seule fois par performer chargé
+        if data.get("name") and not self._urls_verified:
             # Récupération URLs existantes
             raw_urls = data.get("urls", [])
             if isinstance(raw_urls, str):
@@ -932,7 +1021,7 @@ class PerformerFrame(ttk.Frame):
             if dlg.final_urls is not None:
                 data["urls"] = dlg.final_urls
                 self.use_fallback_sources = dlg.use_fallback_sources  # Store preference
-            # Sinon, on garde les URLs d'origine (si l'utilisateur a fermé sans finir)
+            self._urls_verified = True  # Ne plus afficher pour ce performer
 
         self.stash_data = data
         
@@ -994,16 +1083,21 @@ class PerformerFrame(ttk.Frame):
             self._update_validation(key)
 
         # 2. Bio / Détails
-        details = data.get('details') or ""
+        # NOTE: Ne PAS pré-remplir le tab Google avec la bio existante — elle est
+        # visible dans le tab Raffiner > "Bio existante Stash".
+        # Le tab Google reste vide jusqu'à ce que l'utilisateur clique "Générer Google".
         if self._bio_google_text and self._lbl_google_chars:
             self._bio_google_text.delete('1.0', tk.END)
-            self._bio_google_text.insert('1.0', str(details))
-            self._bio_update_chars(2, self._bio_google_text, self._lbl_google_chars)
+            self._lbl_google_chars.config(text='Caractères : 0')
+        if self._bio_ollama_text and self._lbl_ollama_chars:
+            self._bio_ollama_text.delete('1.0', tk.END)
+            self._lbl_ollama_chars.config(text='Caractères : 0')
         self._bio_merge_content = ""
         if self._bio_merge_text and self._lbl_merge_chars:
             self._bio_merge_text.delete('1.0', tk.END)
             self._lbl_merge_chars.config(text='Caractères : 0')
         self._refresh_bio_counters()
+        self._refresh_existing_bio_display()
 
         # 3. URLs
         stash_urls = self.stash_data.get('urls', [])
@@ -1118,12 +1212,13 @@ class PerformerFrame(ttk.Frame):
             self.notebook.select(idx + 1)
 
     def _finish_workflow(self):
-        # Dernier onglet : sauvegarde finale
+        # Dernier onglet : sauvegarde finale puis retour au sélecteur
         saved = self._save_to_stash_internal(show_messages=False, reload_after_save=False)
         if not saved:
             messagebox.showerror("Finish", "Échec de sauvegarde finale.")
             return
-        messagebox.showinfo("Finish", "Workflow terminé et sauvegardé.")
+        # Retour immédiat au sélecteur d'ID (pas de popup bloquant)
+        self._exit_to_selector()
 
     def _exit_to_selector(self):
         # Reset par fermeture de la fenêtre courante, retour sélecteur ID
@@ -1606,23 +1701,61 @@ class PerformerFrame(ttk.Frame):
 
         threading.Thread(target=run_translation, daemon=True).start()
 
-        # 6. Sync bio_raw / trivia scrappés dans l'onglet Bio (si présents)
+        # 6. Sync bio_raw / trivia scrappés dans l'onglet Bio
+        # Priorité pour bio_raw : TheNude et XXXBios (bios les plus riches)
         bio_raw = ""
         trivia = ""
-        try:
+        bio_priority_order = ["TheNude", "XXXBios", "FreeOnes", "IAFD", "Babepedia", "Boobpedia"]
+        result_by_source_bio = {r.get('source', ''): r for r in results}
+        for pname in bio_priority_order:
+            r = result_by_source_bio.get(pname)
+            if r and not bio_raw and r.get('bio_raw'):
+                bio_raw = str(r['bio_raw']).strip()
+            if r and not trivia and r.get('trivia'):
+                trivia = str(r['trivia']).strip()
+        # Fallback si aucune source prioritaire n'a de bio
+        if not bio_raw or not trivia:
             for res in results:
                 if not bio_raw and res.get('bio_raw'):
-                    bio_raw = str(res.get('bio_raw') or '').strip()
+                    bio_raw = str(res['bio_raw']).strip()
                 if not trivia and res.get('trivia'):
-                    trivia = str(res.get('trivia') or '').strip()
+                    trivia = str(res['trivia']).strip()
                 if bio_raw and trivia:
                     break
-        except Exception:
-            pass
         if bio_raw or trivia:
             self._update_raw_content(bio_raw=bio_raw, trivia=trivia)
 
-        messagebox.showinfo("Scraping", f"Scraping terminé ({len(results)} sources). {len(all_discovered)} URLs agrégées.")
+        # 7. Génération automatique des tags depuis les métadonnées scrapées
+        try:
+            from utils.tag_engine import TagRulesEngine
+            metadata_for_tags = self._get_field_values()
+            generated_tags = TagRulesEngine.generate_tags(metadata_for_tags)
+            if generated_tags and 'tags' in self.field_vars:
+                fv = self.field_vars['tags']
+                # Fusionner avec les tags existants dans Stash
+                existing_tags_raw = ""
+                if fv.get('is_multiline'):
+                    existing_tags_raw = fv['entry'].get('1.0', tk.END).strip()
+                else:
+                    existing_tags_raw = fv['main'].get().strip()
+                existing_tags = [t.strip() for t in re.split(r'[,\n\r]+', existing_tags_raw) if t.strip()]
+                merged_tags = sorted(set(existing_tags) | set(generated_tags))
+                merged_str = "\n".join(merged_tags)
+                if fv.get('is_multiline'):
+                    fv['entry'].delete('1.0', tk.END)
+                    fv['entry'].insert('1.0', merged_str)
+                else:
+                    fv['main'].set(merged_str)
+                self._update_validation('tags')
+                print(f"[TAGS] Tags générés automatiquement : {generated_tags}")
+        except Exception as e:
+            print(f"[TAGS] Erreur génération tags: {e}")
+
+        # Sauvegarde automatique silencieuse après scraping
+        saved = self._save_to_stash_internal(show_messages=False, reload_after_save=False)
+        save_status = "✅ sauvegardé dans Stash" if saved else "⚠️ sauvegarde automatique échouée — cliquez 💾 pour réessayer"
+
+        messagebox.showinfo("Scraping", f"Scraping terminé ({len(results)} sources). {len(all_discovered)} URLs agrégées.\n{save_status}")
 
     def _sort_urls(self, urls: List[str]) -> List[str]:
         """Trie les URLs : sources recherchées d'abord (IAFD, FreeOnes, etc.)"""
