@@ -540,6 +540,13 @@ class URLOptimizer:
         "cash.app", "tumblr.com", "threads.net", "facebook.com"
     }
 
+    # URLs d'interviews (groupe 3) : on les garde même si ce sont des "articles",
+    # car elles servent de contexte pour la génération de bio.
+    INTERVIEW_DOMAIN_HINTS = {
+        "barelist.com",
+        "adultdvdtalk.com",
+    }
+
     # Domaines profils autorisés (pas de scènes/galeries externes)
     GROUP1_PROFILE_DOMAINS = {
         "iafd.com",
@@ -561,6 +568,7 @@ class URLOptimizer:
         "fancentro.com",
         "camsoda.com",
         "brazzers.com",
+        "brazzersnetwork.com",
         "digitalplayground.com",
         "realitykings.com",
         "mofosnetwork.com",
@@ -572,6 +580,18 @@ class URLOptimizer:
         "indexxx.com",
         "data18.com",
         "adultfilmdatabase.com",
+
+        # Profils additionnels (demandés)
+        "barelist.com",
+        "kenmarcus.com",
+        "penthouse-pets.net",
+        "pornstarsexmagazines.com",
+        "pornteengirl.com",
+        "viparea.com",
+        "apclips.com",
+        "babesrater.com",
+        "celebmuse.com",
+        "cherrypimps.com",
     }
 
     ALLOWED_PROFILE_DOMAINS = GROUP1_PROFILE_DOMAINS | GROUP2_PROFILE_DOMAINS | OTHER_PROFILE_DOMAINS
@@ -610,9 +630,26 @@ class URLOptimizer:
 
         low_url = url.lower()
         path = urlparse(url).path.lower()
+
+        def _is_interview_url() -> bool:
+            # Heuristique simple: path contient interview/interviews, ou le sous-domaine inclut interview.
+            # Exemples:
+            # - barelist.com/interviews/interview_316_...
+            # - interviews.adultdvdtalk.com/abigail-mac
+            if re.search(r"/(?:interview|interviews)(?:/|_|-)", path, re.I):
+                return True
+            if "interview" in domain:
+                return True
+            if any(self._domain_matches(domain, d) for d in self.INTERVIEW_DOMAIN_HINTS) and "interview" in low_url:
+                return True
+            return False
         
         # Réseaux sociaux: acceptés comme groupe séparé
         if any(self._domain_matches(domain, d) for d in self.SOCIAL_DOMAINS):
+            return True
+
+        # Interviews: acceptées comme groupe séparé (groupe 3)
+        if _is_interview_url():
             return True
 
         # Profils: n'accepter que les domaines attendus du workflow
@@ -720,6 +757,62 @@ class URLOptimizer:
             if not re.search(r'^/actor/[a-z0-9][a-z0-9-]+-\d+/?$', path, re.I):
                 return False
 
+        # Profils additionnels (patterns)
+        if domain == "barelist.com":
+            # ex: /models/id_13138_Abigail_Mac.html
+            if not re.search(r'^/models/id_\d+_[^/]+\.html$', path, re.I):
+                return False
+
+        if domain == "kenmarcus.com":
+            # ex: /tour3/models/AbigailMac.html
+            if not re.search(r'^/tour\d+/models/[^/]+\.html$', path, re.I):
+                return False
+
+        if domain == "penthouse-pets.net":
+            # ex: /pet/abigail_mac.html
+            if not re.search(r'^/pet/[a-z0-9][a-z0-9_-]*\.html$', path, re.I):
+                return False
+
+        if domain == "pornstarsexmagazines.com":
+            # ex: /categories/Abigail_Mac.html
+            if not re.search(r'^/categories/[^/]+\.html$', path, re.I):
+                return False
+
+        if domain == "pornteengirl.com":
+            # ex: /model/abigail-mac.html
+            if not re.search(r'^/model/[^/]+\.html$', path, re.I):
+                return False
+
+        if domain == "viparea.com":
+            # ex: /abigail-mac
+            if not re.search(r'^/[a-z0-9][a-z0-9-]+/?$', path, re.I):
+                return False
+
+        if domain == "apclips.com":
+            # ex: /abigailmac
+            if not re.search(r'^/[a-z0-9][a-z0-9_.-]+/?$', path, re.I):
+                return False
+
+        if domain == "babesrater.com":
+            # ex: /person/25221/abigail-mac
+            if not re.search(r'^/person/\d+/[a-z0-9][a-z0-9-]+/?$', path, re.I):
+                return False
+
+        if domain == "brazzersnetwork.com":
+            # ex: /pornstar/1779/abigail-mac
+            if not re.search(r'^/pornstar/\d+/[a-z0-9][a-z0-9-]+/?$', path, re.I):
+                return False
+
+        if domain == "celebmuse.com":
+            # ex: /celebrities/abigail-mac
+            if not re.search(r'^/celebrities/[a-z0-9][a-z0-9-]+/?$', path, re.I):
+                return False
+
+        if domain == "cherrypimps.com":
+            # ex: /models/AbigailMac.html (on rejette trailers)
+            if not re.search(r'^/models/[^/]+\.html$', path, re.I):
+                return False
+
         # Rejeter pages génériques sans profil
         if domain == "boobpedia.com" and "/main_page" in path:
             return False
@@ -728,7 +821,8 @@ class URLOptimizer:
         bad_path_tokens = [
             '/scene', '/scenes', '/video', '/videos', '/gallery', '/galleries',
             '/image', '/images', '/pics', '/photo', '/photos', '/track/', '/updates',
-            '/category/', '/tag/', '/post/', '/episode/', '/clip/', '/clips/'
+            '/category/', '/tag/', '/post/', '/episode/', '/clip/', '/clips/',
+            '/trailer', '/trailers'
         ]
         if any(tok in path for tok in bad_path_tokens):
             return False
@@ -758,6 +852,7 @@ class URLOptimizer:
         """
         cleaned_set = set()
         profile_candidates = []
+        interview_candidates = []
         social_candidates = []
 
         for raw_url in url_list:
@@ -791,8 +886,18 @@ class URLOptimizer:
                 "domain": domain
             }
 
+            # Classer en groupes: profils / interviews / réseaux sociaux
+            path = urlparse(url).path.lower()
+            is_interview = (
+                re.search(r"/(?:interview|interviews)(?:/|_|-)", path, re.I)
+                or ("interview" in domain)
+                or (any(self._domain_matches(domain, d) for d in self.INTERVIEW_DOMAIN_HINTS) and "interview" in url.lower())
+            )
+
             if any(self._domain_matches(domain, d) for d in self.SOCIAL_DOMAINS):
                 social_candidates.append(item)
+            elif is_interview:
+                interview_candidates.append(item)
             else:
                 profile_candidates.append(item)
 
@@ -809,10 +914,14 @@ class URLOptimizer:
             return list(best_by_domain.values())
 
         profile_unique = keep_one_per_domain(profile_candidates)
+        interview_unique = keep_one_per_domain(interview_candidates)
         social_unique = keep_one_per_domain(social_candidates)
 
-        # Tri global demandé : les URLs (plafonnées) en ordre alphabétique.
-        # (Le filtrage "profil-only" et la déduplication/1 par domaine restent appliqués.)
-        final_items = profile_unique + social_unique
-        final_items.sort(key=lambda x: x['url'].lower())
+        # Groupe 1+2 (profils), Groupe 3 (interviews), puis réseaux sociaux.
+        # Tri alphabétique à l'intérieur de chaque groupe.
+        profile_unique.sort(key=lambda x: x['url'].lower())
+        interview_unique.sort(key=lambda x: x['url'].lower())
+        social_unique.sort(key=lambda x: x['url'].lower())
+
+        final_items = profile_unique + interview_unique + social_unique
         return [item['url'] for item in final_items[:limit]]

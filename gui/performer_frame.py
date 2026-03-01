@@ -188,10 +188,47 @@ class PerformerFrame(ttk.Frame):
     def _refresh_bio_counters(self):
         try:
             urls_count = 0
+            profiles_count = 0
+            interviews_count = 0
+            socials_count = 0
             if 'urls' in self.field_vars and self.field_vars['urls'].get('is_multiline'):
                 urls_raw = self.field_vars['urls']['entry'].get('1.0', tk.END).strip()
                 urls = [u.strip() for u in re.split(r'[\,\n\r\s]+', urls_raw) if u.strip()]
-                urls_count = len(clean_urls_list(urls))
+                urls_clean = clean_urls_list(urls)
+                urls_count = len(urls_clean)
+
+                # Comptage des groupes: Profils (G1+G2), Interviews (G3), Réseaux sociaux
+                try:
+                    from urllib.parse import urlparse
+                    from services.interview_extractor import is_interview_url
+                except Exception:
+                    urlparse = None
+                    is_interview_url = None
+
+                social_roots = set(getattr(self.url_optimizer, 'SOCIAL_DOMAINS', set()) or set())
+
+                def _domain_of(u: str) -> str:
+                    try:
+                        return (urlparse(u).netloc or '').lower().replace('www.', '') if urlparse else ''
+                    except Exception:
+                        return ''
+
+                def _is_social(u: str) -> bool:
+                    d = _domain_of(u)
+                    if not d:
+                        return False
+                    for root in social_roots:
+                        if d == root or d.endswith('.' + root):
+                            return True
+                    return False
+
+                for u in urls_clean:
+                    if is_interview_url and is_interview_url(u):
+                        interviews_count += 1
+                    elif _is_social(u):
+                        socials_count += 1
+                    else:
+                        profiles_count += 1
 
             awards_count = 0
             if 'awards' in self.field_vars and self.field_vars['awards'].get('is_multiline'):
@@ -200,6 +237,14 @@ class PerformerFrame(ttk.Frame):
 
             if self._lbl_url_count:
                 self._lbl_url_count.config(text=f"URLs : {urls_count}")
+            if getattr(self, '_lbl_url_groups', None):
+                self._lbl_url_groups.config(
+                    text=(
+                        f"Groupes — Profils (G1+G2): {profiles_count} | "
+                        f"Interviews (G3): {interviews_count} | "
+                        f"Réseaux sociaux: {socials_count}"
+                    )
+                )
             if self._lbl_award_count:
                 self._lbl_award_count.config(text=f"Awards : {awards_count}")
         except Exception:
@@ -469,6 +514,13 @@ class PerformerFrame(ttk.Frame):
         # when editing URLs, keep them clean/validated automatically
         if key == "urls":
             txt.bind('<KeyRelease>', self._on_urls_modified)
+            # Affichage explicite des groupes (G1+G2 profils / G3 interviews / sociaux)
+            self._lbl_url_groups = ttk.Label(
+                parent,
+                text="Groupes — Profils (G1+G2): 0 | Interviews (G3): 0 | Réseaux sociaux: 0",
+                font=('Segoe UI', 8, 'italic'),
+            )
+            self._lbl_url_groups.pack(anchor='w', pady=(0, 4))
         
         var_stash = tk.StringVar()
         var_main = tk.StringVar()

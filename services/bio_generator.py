@@ -63,11 +63,72 @@ class BioGenerator:
         self._gemini_disabled = False
         self._gemini_warned_search_disabled = False
         self._gemini_warned_disabled = False
+        self._interview_cache: Dict[str, str] = {}
         if self.gemini_key:
             print("[BioGenerator] Clé Gemini chargée — génération Google avec IA activée.")
         else:
             print("[BioGenerator] Pas de clé Gemini — génération Google en mode template.")
         print(f"[OLLAMA] Options GPU actives: num_gpu={self.ollama_num_gpu}, num_thread={self.ollama_num_thread}")
+
+    def _get_interview_context(self, performer_name: str, metadata: Dict) -> str:
+        """Construit un contexte compact depuis les URLs d'interviews.
+
+        Objectif: enrichir la génération de bio avec des infos biographiques fiables
+        (Q/R, parcours, anecdotes). Limité pour éviter de ralentir le workflow.
+        """
+        urls = metadata.get("urls") or []
+        if isinstance(urls, str):
+            urls = [u.strip() for u in re.split(r"[\s,\n\r]+", urls) if u.strip()]
+        if not isinstance(urls, list) or not urls:
+            return ""
+
+        try:
+            from services.interview_extractor import is_interview_url, extract_interview_text
+        except Exception:
+            return ""
+
+        interview_urls = [u for u in urls if isinstance(u, str) and is_interview_url(u)]
+        if not interview_urls:
+            return ""
+
+        # Limites conservatrices
+        max_pages = 2
+        max_chars = 2500
+
+        chunks: List[str] = []
+        used = 0
+        for u in interview_urls[:max_pages]:
+            u = u.strip()
+            if not u:
+                continue
+
+            if u in self._interview_cache:
+                text = self._interview_cache[u]
+            else:
+                title, text_raw = extract_interview_text(u)
+                text = ""
+                if text_raw:
+                    header = f"SOURCE INTERVIEW: {u}"
+                    if title:
+                        header += f"\nTITRE: {title.strip()}"
+                    text = (header + "\n" + text_raw.strip()).strip()
+                self._interview_cache[u] = text
+
+            if not text:
+                continue
+
+            remaining = max_chars - used
+            if remaining <= 0:
+                break
+            if len(text) > remaining:
+                text = text[:remaining]
+            chunks.append(text)
+            used += len(text) + 2
+
+        combined = "\n\n".join(chunks).strip()
+        if combined:
+            print(f"[BioGenerator] Contexte interviews ajouté ({len(combined)} chars) — {performer_name}")
+        return combined
 
     def _ollama_request(self, model: str, prompt: str, timeout: int = 360) -> Optional[str]:
         """Call Ollama with GPU-preferred options and safe fallback."""
@@ -401,6 +462,12 @@ Retourne UNIQUEMENT la liste nettoyée, une ligne par award, sans explication.""
         awards_raw   = metadata.get('awards') or metadata.get('awards_summary') or ''
         bio_raw      = metadata.get('bio_raw') or metadata.get('details', '')
         stash_bio    = metadata.get('stash_bio', '')  # Bio déjà présente dans Stash
+
+        interviews_ctx = metadata.get('interviews') or ''
+        if not interviews_ctx:
+            interviews_ctx = self._get_interview_context(performer_name, metadata)
+            if interviews_ctx:
+                metadata['interviews'] = interviews_ctx
         if isinstance(aliases, str):
             aliases = [a.strip() for a in re.split(r'[,\n]', aliases) if a.strip()]
         alias_str = ', '.join(aliases) if aliases else performer_name
@@ -428,6 +495,8 @@ Retourne UNIQUEMENT la liste nettoyée, une ligne par award, sans explication.""
             if trivia:       lines.append(f"\nTrivia :\n{trivia[:800]}")
             if awards_raw:   lines.append(f"\nAwards :\n{awards_raw[:1200]}")
             if bio_raw:      lines.append(f"\nBio scrapée :\n{bio_raw[:1000]}")
+            if interviews_ctx:
+                lines.append(f"\nInterviews (extraits) :\n{interviews_ctx[:2500]}")
             if stash_bio and stash_bio != bio_raw:
                 lines.append(f"\nBio actuelle dans Stash (à améliorer/enrichir) :\n{stash_bio[:1200]}")
             lines += [
@@ -536,6 +605,14 @@ Retourne UNIQUEMENT la liste nettoyée, une ligne par award, sans explication.""
                 extra_context += f"\nBio source scrappée :\n{bio_source}"
             if metadata.get('awards'):
                 extra_context += f"\nRécompenses (brut) :\n{metadata['awards']}"
+
+            interviews_ctx = metadata.get('interviews') or ''
+            if not interviews_ctx:
+                interviews_ctx = self._get_interview_context(performer_name, metadata)
+                if interviews_ctx:
+                    metadata['interviews'] = interviews_ctx
+            if interviews_ctx:
+                extra_context += f"\n\nInterviews (extraits) :\n{interviews_ctx}"
 
             if custom_prompt:
                 prompt = f"""Tu es un rédacteur expert en biographies pour l'industrie du divertissement adulte.
