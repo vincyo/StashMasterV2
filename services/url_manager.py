@@ -2,7 +2,7 @@ import re
 import requests
 import time
 from typing import List, Dict, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote_plus, parse_qs, unquote
 
 # Import des scrapers
 from services.scrapers import (
@@ -15,23 +15,27 @@ class URLManager:
     """
     Gère la vérification, le tri et l'acquisition des URLs prioritaires.
     
-    Ordre de priorité :
-    1. IAFD
-    2. FreeOnes
-    3. TheNude
-    4. Babepedia
-    5. Boobpedia
-    6. XXXBios
+    Stratégie 2-tier:
+    - 4 sources 1ère passe (utilisées par défaut) : IAFD, FreeOnes, TheNude, XXXBios
+    - 2 sources de secours (2ème passe si nécessaire) : Babepedia, Boobpedia
     """
     
-    PRIORITY_ORDER = [
-        ("iafd.com", IAFDScraper),
-        ("freeones.xxx", FreeOnesScraper),
-        ("thenude.com", TheNudeScraper),
+    # 4 sources 1ère passe
+    PRIMARY_SOURCES = [
+        ("iafd.com", IAFDScraper),        # 75% - Métadonnées biographiques
+        ("freeones.xxx", FreeOnesScraper), # 65% - Awards, trivia, tags
+        ("thenude.com", TheNudeScraper),   # 70% - Bios studio, aliases
+        ("xxxbios.com", XXXBiosScraper),   # Infos perso + bio + awards + réseaux sociaux
+    ]
+    
+    # 2 sources de secours (utilisées en 2ème passe si nécessaire)
+    FALLBACK_SOURCES = [
         ("babepedia.com", BabepediaScraper),
         ("boobpedia.com", BoobpediaScraper),
-        ("xxxbios.com", XXXBiosScraper)
     ]
+    
+    # Liste complète (pour compatibilité)
+    PRIORITY_ORDER = PRIMARY_SOURCES + FALLBACK_SOURCES
 
     def __init__(self):
         # Initialisation des scrapers
@@ -44,7 +48,46 @@ class URLManager:
             "xxxbios.com": XXXBiosScraper()
         }
 
-    def process_performer_urls(self, existing_urls: List[str], performer_name: str, progress_callback=None) -> List[str]:
+    def _lookup_known_url_from_db(self, domain: str, performer_name: str) -> Optional[str]:
+        """Fallback générique: tente de récupérer une URL déjà connue en base pour ce performer+domain."""
+        try:
+            from services.config_manager import ConfigManager
+            from services.database import StashDatabase
+
+            cfg = ConfigManager()
+            db = StashDatabase(cfg.get("database_path"))
+            conn = db._get_connection()
+            cur = conn.cursor()
+
+            # Trouver le performer par nom (insensible à la casse)
+            cur.execute("SELECT id FROM performers WHERE lower(name)=lower(?) LIMIT 1", (performer_name,))
+            row = cur.fetchone()
+            if not row:
+                return None
+
+            performer_id = str(row[0])
+            cur.execute("SELECT url FROM performer_urls WHERE performer_id=?", (performer_id,))
+            urls = [r[0] for r in cur.fetchall() if r and r[0]]
+
+            # Garder les URLs du domaine demandé et valider le pattern profil
+            candidates = []
+            for u in urls:
+                d = self.get_domain_key(u)
+                if d != domain:
+                    continue
+                if self.is_profile_url(u, domain) and self.is_valid_profile_url(u, d, performer_name=performer_name):
+                    candidates.append(u)
+
+            if not candidates:
+                return None
+
+            # Préférer URL courte et "propre"
+            candidates.sort(key=lambda x: (len(x), x.lower()))
+            return candidates[0]
+        except Exception:
+            return None
+
+    def process_performer_urls(self, existing_urls: List[str], performer_name: str, progress_callback=None, use_fallback_sources: bool = False) -> List[str]:
         """
         Processus complet :
         1. Identification des URLs prioritaires présentes
@@ -52,23 +95,24 @@ class URLManager:
         3. Recherche/Acquisition des URLs manquantes
         4. Nettoyage et validation des autres URLs
         5. Retourne la liste finale triée (Max 50)
+        
+        Args:
+            use_fallback_sources: Si False (défaut), utilise seulement les 3 sources primaires.
+                                  Si True, utilise les 6 sources (primaires + secours).
         """
         if progress_callback:
             progress_callback(0, "Analyse des URLs existantes...")
 
-        # 1. Structure pour stocker les URLs prioritaires (index 0 à 5)
-        priority_slots: List[Optional[str]] = [None] * 6
+        # Déterminer quelles sources utiliser
+        active_sources = self.PRIMARY_SOURCES + (self.FALLBACK_SOURCES if use_fallback_sources else [])
+        num_sources = len(active_sources)
+        
+        # 1. Structure pour stocker les URLs prioritaires
+        priority_slots: List[Optional[str]] = [None] * num_sources
         other_urls: List[str] = []
         
-        # Mapping domain -> index
-        domain_to_index = {
-            "iafd.com": 0,
-            "freeones.xxx": 1, 
-            "thenude.com": 2,
-            "babepedia.com": 3,
-            "boobpedia.com": 4,
-            "xxxbios.com": 5
-        }
+        # Mapping domain -> index (basé sur les sources actives)
+        domain_to_index = {domain: i for i, (domain, _) in enumerate(active_sources)}
 
         # 2. Tri des URLs existantes
         for url in existing_urls:
@@ -96,9 +140,9 @@ class URLManager:
                 other_urls.append(url)
 
         # 3. Validation et Acquisition des manquants
-        for i, (domain, scraper_class) in enumerate(self.PRIORITY_ORDER):
+        for i, (domain, scraper_class) in enumerate(active_sources):
             if progress_callback:
-                progress_callback(int((i / 6) * 50), f"Vérification {domain}...")
+                progress_callback(int((i / num_sources) * 50), f"Vérification {domain}...")
 
             current_url = priority_slots[i]
             
@@ -112,7 +156,7 @@ class URLManager:
             # B. Acquisition si manquant (ou devenu manquant après validation)
             if priority_slots[i] is None:
                 if progress_callback:
-                    progress_callback(int((i / 6) * 50) + 5, f"Recherche {domain}...")
+                    progress_callback(int((i / num_sources) * 50) + 5, f"Recherche {domain}...")
                 
                 found_url = self.search_url_for_domain(domain, performer_name)
                 if found_url:
@@ -158,7 +202,8 @@ class URLManager:
             parsed = urlparse(url)
             netloc = parsed.netloc.lower()
             if "iafd.com" in netloc: return "iafd.com"
-            if "freeones" in netloc: return "freeones.xxx" # Gère freeones.com, freeones.xxx
+            if netloc == "freeones.com" or netloc.endswith(".freeones.com") or netloc == "freeones.xxx" or netloc.endswith(".freeones.xxx"):
+                return "freeones.xxx"  # Gère freeones.com, freeones.xxx uniquement
             if "thenude.com" in netloc: return "thenude.com"
             if "babepedia.com" in netloc: return "babepedia.com"
             if "boobpedia.com" in netloc: return "boobpedia.com"
@@ -172,10 +217,18 @@ class URLManager:
         # Logique simplifiée, peut être affinée par scraper
         if domain == "iafd.com" and ("person.rme" in url or "person.rvm" in url):
             return True
-        if domain == "freeones.xxx" and "/feed/" not in url: return True
+        if domain == "freeones.xxx":
+            netloc = (urlparse(url).netloc or "").lower()
+            if not (netloc == "freeones.com" or netloc.endswith(".freeones.com") or netloc == "freeones.xxx" or netloc.endswith(".freeones.xxx")):
+                return False
+            return "/feed/" not in url
         if domain == "thenude.com" and "_" in url: return True
         if domain == "babepedia.com" and "/babe/" in url: return True
-        if domain == "boobpedia.com" and "/boobs/" in url: return True
+        if domain == "boobpedia.com":
+            low = url.lower()
+            if "/boobs/" in low and "/main_page" not in low:
+                return True
+            return False
         # XXXBios : doit avoir le pattern exact slug-biography (pas juste -biography)
         if domain == "xxxbios.com":
             # Pattern plus strict : xxxbios.com/[nom-artiste]-biography/
@@ -235,9 +288,14 @@ class URLManager:
         scraper = self.scrapers.get(domain)
         if not scraper:
             return None
+
+        # 0) Fallback générique base locale (évite les régressions si recherche distante KO)
+        known = self._lookup_known_url_from_db(domain, name)
+        if known:
+            return known
             
         try:
-            # 1. Si le scraper a une méthode 'search' (implémentée pour XXXBios)
+            # 1) Recherche native du scraper (ex: XXXBios)
             if hasattr(scraper, "search"):
                 found_url = scraper.search(name)
                 # Valider que l'URL trouvée correspond bien au pattern de profil attendu
@@ -247,29 +305,190 @@ class URLManager:
                     else:
                         print(f"[URLManager] URL rejetée pour {domain} (pattern invalide) : {found_url}")
                         return None
-                return None
+                # continue vers autres stratégies si search() n'a rien donné
+
+            # 2) SourceFinder (IAFD / FreeOnes / TheNude / Babepedia)
+            sourcefinder_map = {
+                "iafd.com": "IAFD",
+                "freeones.xxx": "FreeOnes",
+                "thenude.com": "TheNude",
+                "babepedia.com": "Babepedia",
+            }
+            sf_source = sourcefinder_map.get(domain)
+            if sf_source:
+                try:
+                    from services.source_finder import SourceFinder
+                    finder = SourceFinder(timeout=10, delay=0)
+                    result = finder.find_for_source(sf_source, name, aliases=[])
+                    found_url = None
+                    if result and result.best and result.best.url:
+                        found_url = result.best.url
+                    elif result and result.candidates:
+                        found_url = result.candidates[0].url
+
+                    if found_url:
+                        if self.is_profile_url(found_url, domain):
+                            return found_url
+                        print(f"[URLManager] URL SourceFinder rejetée pour {domain}: {found_url}")
+                except Exception as e:
+                    print(f"[URLManager] SourceFinder erreur pour {domain}: {e}")
+
+            # 2bis) Fallback direct IAFD via page de résultats
+            if domain == "iafd.com":
+                try:
+                    query = re.sub(r"\s+", "+", name.strip())
+                    search_url = (
+                        "https://www.iafd.com/results.asp?pagetype=person"
+                        f"&searchtype=name&sex=f&q={query}"
+                    )
+                    soup = _fetch(search_url)
+                    if soup:
+                        candidates = []
+                        for a in soup.find_all("a", href=True):
+                            href = a["href"]
+                            if "person.rme" not in href and "person.rvm" not in href:
+                                continue
+                            if href.startswith("/"):
+                                href = "https://www.iafd.com" + href
+                            txt = (a.get_text() or "").strip().lower()
+                            name_l = (name or "").strip().lower()
+                            score = 0
+                            if name_l and txt == name_l:
+                                score += 100
+                            elif name_l and name_l in txt:
+                                score += 60
+                            if "person.rme" in href:
+                                score += 10
+                            candidates.append((score, href))
+
+                        if candidates:
+                            candidates.sort(key=lambda x: x[0], reverse=True)
+                            for _, candidate_url in candidates:
+                                if self.is_profile_url(candidate_url, domain):
+                                    return candidate_url
+                except Exception as e:
+                    print(f"[URLManager] Fallback IAFD erreur: {e}")
             
-            # 2. Construction d'URL (Boobpedia, XXXBios fallback)
-            # XXXBiosScraper a build_url, BoobpediaScraper a build_url aussi ?
-            # Vérifions les scrapers un par un ou utilisons une logique générique
-            
+            # 3) Construction d'URL directe (Babepedia/Boobpedia + XXXBios fallback)
+            if domain == "babepedia.com":
+                 name_clean = name.strip()
+                 variants = []
+                 variants.append(re.sub(r"\s+", "_", name_clean.title()))
+                 variants.append(re.sub(r"\s+", "-", name_clean.lower()))
+                 variants.append(re.sub(r"\s+", "_", name_clean))
+
+                 tried = set()
+                 for slug in variants:
+                     if slug in tried:
+                         continue
+                     tried.add(slug)
+                     url = f"https://www.babepedia.com/babe/{slug}"
+                     # Babepedia peut répondre 403 malgré une page valide, donc
+                     # on s'appuie sur le pattern profil + reachability manager.
+                     if self.is_profile_url(url, domain) and self.is_url_reachable(url):
+                         return url
+
             if domain == "boobpedia.com":
-                 slug = re.sub(r"\s+", "_", name.strip().title())
-                 url = f"https://www.boobpedia.com/boobs/{slug}"
-                 if self.is_url_reachable(url):
+                 # Essais de slugs courants
+                 name_clean = name.strip()
+                 variants = []
+                 variants.append(re.sub(r"\s+", "_", name_clean.title()))
+                 variants.append(re.sub(r"\s+", "_", name_clean))
+                 variants.append(re.sub(r"\s+", "_", name_clean.lower().title()))
+
+                 tried = set()
+                 for slug in variants:
+                     if slug in tried:
+                         continue
+                     tried.add(slug)
+                     url = f"https://www.boobpedia.com/boobs/{slug}"
+                     if self.is_profile_url(url, domain) and self.is_url_reachable(url):
+                         return url
+
+            if domain == "thenude.com":
+                 # Fallback via barre de recherche principale TheNude (navbar-search)
+                 try:
+                     from urllib.parse import quote
+                     
+                     # Endpoint exact du formulaire navbar-search
+                     search_url = "https://www.thenude.com/index.php"
+                     params = {
+                         "page": "search",
+                         "action": "searchModels",
+                         "__form_name": "navbar-search",
+                         "m_aka": "on",
+                         "m_name": name.strip()
+                     }
+                     
+                     # Construire l'URL complète
+                     param_str = "&".join(f"{k}={quote(str(v), safe='')}" for k, v in params.items())
+                     full_url = f"{search_url}?{param_str}"
+                     
+                     soup = _fetch(full_url)
+                     if not soup:
+                         print(f"[URLManager] TheNude navbar-search: échec fetch")
+                     else:
+                         candidates = []
+                         for a in soup.find_all("a", href=True):
+                             href = a["href"]
+                             # Pattern profil TheNude: nom_ID.htm ou _ID.htm
+                             if not re.search(r'(?:^|/)_[0-9]+\.htm$|(?:^|/)[^/]+_[0-9]+\.htm$', href, re.I):
+                                 continue
+                             
+                             # Construire URL complète
+                             if href.startswith("/"):
+                                 href = "https://www.thenude.com" + href
+                             elif not href.startswith("http"):
+                                 href = "https://www.thenude.com/" + href
+                             
+                             # Encoder les espaces dans l'URL
+                             href = href.replace(" ", "%20")
+                             
+                             # Scoring basé sur le texte du lien
+                             txt = (a.get_text() or "").strip().lower()
+                             name_l = (name or "").strip().lower()
+                             score = 0
+                             if name_l and txt == name_l:
+                                 score += 100
+                             elif name_l and name_l in txt:
+                                 score += 60
+                             elif txt and txt in name_l:
+                                 score += 40
+                             
+                             # Bonus si le slug correspond
+                             href_lower = href.lower()
+                             name_slug = name_l.replace(" ", "-")
+                             if name_slug in href_lower:
+                                 score += 50
+                             
+                             candidates.append((score, href))
+
+                         if candidates:
+                             candidates.sort(key=lambda x: x[0], reverse=True)
+                             print(f"[URLManager] TheNude: {len(candidates)} candidats, meilleur score={candidates[0][0]}")
+                             
+                             # Prendre le premier avec score > 0 et profil valide
+                             for score, candidate_url in candidates:
+                                 if score > 0 and self.is_profile_url(candidate_url, domain):
+                                     return candidate_url
+                 except Exception as e:
+                     print(f"[URLManager] Fallback TheNude erreur: {e}")
+
+            if domain == "iafd.com":
+                 # Fallback direct : slug IAFD classique perfid=prenom_nom
+                 name_clean = name.strip()
+                 slug_us = re.sub(r"\s+", "_", name_clean.lower())
+                 slug_dash = re.sub(r"\s+", "-", name_clean.lower())
+                 url = f"https://www.iafd.com/person.rme/perfid={slug_us}/gender=f/{slug_dash}.htm"
+                 if self.is_profile_url(url, domain) and self.is_url_reachable(url):
                      return url
 
             if domain == "xxxbios.com":
-                 # Fallback si search n'a pas marché (mais search est appelé ci-dessus si dispo)
+                 # Fallback si search n'a pas marché
                  if hasattr(scraper, "build_url"):
                      url = scraper.build_url(name)
-                     if self.is_url_reachable(url):
+                     if self.is_profile_url(url, domain) and self.is_url_reachable(url):
                          return url
-
-            # 3. Pour IAFD, FreeOnes, TheNude, Babepedia
-            # Idéalement on utiliserait une recherche Google ou interne
-            # Pour l'instant on retourne None si pas de méthode de recherche explicite
-            # TODO: Implémenter recherche IAFD/FreeOnes
             
             return None
             
@@ -315,6 +534,12 @@ class URLOptimizer:
         "redirect.",
     ]
 
+    SOCIAL_DOMAINS = {
+        "instagram.com", "x.com", "twitter.com", "onlyfans.com", "fansly.com",
+        "tiktok.com", "youtube.com", "twitch.tv", "allmylinks.com", "linktr.ee",
+        "cash.app", "tumblr.com", "threads.net", "facebook.com"
+    }
+
     def clean_url(self, url: str) -> str:
         """Supprime les paramètres de tracking et normalise l'URL"""
         from urllib.parse import urlparse, urlunparse
@@ -346,6 +571,10 @@ class URLOptimizer:
         low_url = url.lower()
         path = urlparse(url).path.lower()
         
+        # Réseaux sociaux: acceptés comme groupe séparé
+        if any(domain == d or domain.endswith(f".{d}") for d in self.SOCIAL_DOMAINS):
+            return True
+
         # Validation stricte pour certains domaines
         if domain == "xxxbios.com":
             # Doit se terminer par -biography, pas des pages génériques
@@ -354,11 +583,25 @@ class URLOptimizer:
         
         if domain == "iafd.com" and not ("person.rme" in url or "person.rvm" in url):
             return False
+
+        if domain == "thenude.com":
+            # Profil TheNude attendu : /slug_12345.htm OU /_12345.htm
+            if not re.search(r'/(?:[^/]*_)?\d+\.htm$', path, re.I):
+                return False
+
+        if domain in ("freeones.com", "freeones.xxx"):
+            # Profil FreeOnes attendu : /slug ou /slug/bio
+            if not re.search(r'^/[a-z0-9][a-z0-9-]+(?:/bio)?$', path, re.I):
+                return False
             
         if domain == "babepedia.com" and "/babe/" not in url:
             return False
             
         if domain == "boobpedia.com" and "/boobs/" not in url:
+            return False
+
+        # Rejeter pages génériques sans profil
+        if domain == "boobpedia.com" and "/main_page" in path:
             return False
 
         # Rejeter les pages manifestement non-profil (scènes, galeries, tracking...)
@@ -394,7 +637,8 @@ class URLOptimizer:
         Retourne les top URLs jusqu'à la limite spécifiée.
         """
         cleaned_set = set()
-        ranked_urls = []
+        profile_candidates = []
+        social_candidates = []
 
         for raw_url in url_list:
             if not raw_url or not isinstance(raw_url, str):
@@ -422,18 +666,34 @@ class URLOptimizer:
             if url in cleaned_set:
                 continue
             
-            # Attribution de la priorité
-            priority = self.PRIORITY_MAP.get(domain, 99)  # 99 pour les sites inconnus
-            
-            ranked_urls.append({
+            item = {
                 "url": url,
-                "priority": priority,
                 "domain": domain
-            })
+            }
+
+            if any(domain == d or domain.endswith(f".{d}") for d in self.SOCIAL_DOMAINS):
+                social_candidates.append(item)
+            else:
+                profile_candidates.append(item)
+
             cleaned_set.add(url)
 
-        # Tri alphabétique demandé
-        ranked_urls.sort(key=lambda x: x['url'].lower())
-        
-        # Retourner uniquement les URLs (pas les métadonnées)
-        return [item['url'] for item in ranked_urls[:limit]]
+        # 1 URL par domaine dans chaque groupe (profil / réseaux sociaux)
+        def keep_one_per_domain(items: List[Dict[str, str]]) -> List[Dict[str, str]]:
+            best_by_domain: Dict[str, Dict[str, str]] = {}
+            for item in items:
+                dom = item["domain"]
+                # garder la première vue (préserve les URLs prioritaires validées)
+                if dom not in best_by_domain:
+                    best_by_domain[dom] = item
+            return list(best_by_domain.values())
+
+        profile_unique = keep_one_per_domain(profile_candidates)
+        social_unique = keep_one_per_domain(social_candidates)
+
+        # Tri alphabétique demandé, avec groupe profils puis groupe réseaux sociaux
+        profile_unique.sort(key=lambda x: x['url'].lower())
+        social_unique.sort(key=lambda x: x['url'].lower())
+
+        final_items = profile_unique + social_unique
+        return [item['url'] for item in final_items[:limit]]

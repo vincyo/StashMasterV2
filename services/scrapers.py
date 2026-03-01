@@ -12,6 +12,7 @@ import re
 import requests
 from bs4 import BeautifulSoup
 from typing import Dict, List, Optional, Any
+from urllib.parse import urlparse
 
 
 # ---------------------------------------------------------------------------
@@ -1016,67 +1017,121 @@ class XXXBiosScraper(ScraperBase):
             # Enlever le suffixe " Biography" s'il est présent
             data["name"] = re.sub(r" Biography$", "", raw_name, flags=re.IGNORECASE).strip()
 
-        # --- Infos personnelles (tableau ou liste .personal-info) ---
+        # --- Infos personnelles (tableau ou liste) ---
         info_section = (
             soup.find("div", class_=re.compile(r"personal.?info|bio.?info|profile.?info", re.I))
             or soup.find("table", class_=re.compile(r"personal|bio|profile", re.I))
         )
 
-        def _process_kv(k, v):
-            if not v: return
+        def _find_heading(pattern: str) -> Optional[Any]:
+            for h in soup.find_all(["h2", "h3", "h4"]):
+                if re.search(pattern, h.get_text(" "), re.I):
+                    return h
+            return None
+
+        def _host_is(host: str, domain: str) -> bool:
+            return host == domain or host.endswith("." + domain)
+
+        def _process_kv(k, v) -> bool:
+            if not v:
+                return False
             if k in ("Born", "Date of Birth", "Birthday"):
                 data["birthdate"] = v
+                return True
             elif k in ("Birthplace", "Place of Birth"):
                 data["birthplace"] = v
+                return True
             elif k in ("Height",):
                 data["height"] = _extract_cm(v)
+                return True
             elif k in ("Weight",):
                 data["weight"] = _extract_kg(v)
+                return True
             elif k in ("Measurements",):
                 data["measurements"] = v
+                return True
             elif k in ("Hair Color", "Hair"):
                 data["hair_color"] = v
+                return True
             elif k in ("Eye Color", "Eyes"):
                 data["eye_color"] = v
+                return True
             elif k in ("Boobs", "Breast Size", "Breasts"):
                 data["fake_tits"] = v
+                return True
             elif k in ("Ethnicity",):
                 data["ethnicity"] = v
+                return True
             elif k in ("Nationality", "Country"):
                 data["country"] = v
+                return True
             elif k in ("Years Active", "Career"):
                 data["career_length"] = v
+                return True
             elif k in ("Also Known As", "AKA", "Aliases"):
                 aliases = [a.strip() for a in re.split(r"[,\n|]", v) if a.strip()]
                 data["aliases"] = aliases
+                return True
+            elif k in ("Tattoos", "Tattoo"):
+                data["tattoos"] = v
+                return True
+            elif k in ("Piercings", "Piercing"):
+                data["piercings"] = v
+                return True
+
+            return False
+
+        def _process_text_kv_line(line: str) -> bool:
+            line = _clean(line)
+            if not line or ":" not in line:
+                return False
+            k, v = line.split(":", 1)
+            return _process_kv(_clean(k), _clean(v))
+
+        personal_header = _find_heading(r"\bPersonal\s*Info\b")
+        if not info_section and personal_header:
+            # Certains templates n'ont pas de classe dédiée : l'info est dans le bloc suivant.
+            info_section = personal_header.find_next(
+                lambda t: getattr(t, "name", None) in ("table", "ul", "ol", "div", "section")
+            )
 
         if info_section:
             rows = info_section.find_all("tr") or info_section.find_all("li")
             for row in rows:
                 cells = row.find_all(["th", "td", "span"])
                 if len(cells) >= 2:
-                    key = _clean(cells[0].get_text()).rstrip(":")
+                    key = _clean(cells[0].get_text()).rstrip(":").strip()
                     val = _clean(cells[1].get_text())
                 elif row.find("strong") or row.find("b"):
                     lbl = row.find("strong") or row.find("b")
-                    key = _clean(lbl.get_text()).rstrip(":")
+                    key = _clean(lbl.get_text()).rstrip(":").strip()
                     val = _clean(row.get_text().replace(lbl.get_text(), "", 1))
                 else:
                     continue
                 _process_kv(key, val)
         else:
             # Fallback : Recherche d'un titre "Personal Info" et parsing des paragraphes suivants
-            header = soup.find(["h2", "h3", "h4"], string=re.compile(r"Personal Info", re.I))
-            if header:
-                for sibling in header.find_next_siblings():
-                    if sibling.name in ("h2", "h3", "h4", "div", "section"):
-                        break
-                    text = _clean(sibling.get_text())
-                    if ":" in text:
-                        parts = text.split(":", 1)
-                        key = _clean(parts[0])
-                        val = _clean(parts[1])
-                        _process_kv(key, val)
+            if personal_header:
+                # Beaucoup de pages mettent l'info dans un <div> ou <section> juste après le header.
+                # On parse donc le prochain bloc (table/ul/div) plutôt que d'arrêter dès qu'on voit div/section.
+                block = personal_header.find_next(
+                    lambda t: getattr(t, "name", None) in ("table", "ul", "ol", "div", "section")
+                )
+                if block:
+                    # 1) Table classique
+                    if block.name == "table":
+                        for tr in block.find_all("tr"):
+                            cells = tr.find_all(["th", "td"])
+                            if len(cells) >= 2:
+                                _process_kv(_clean(cells[0].get_text()).rstrip(":"), _clean(cells[1].get_text()))
+                    # 2) Liste (li)
+                    for li in block.find_all("li"):
+                        _process_text_kv_line(li.get_text(" "))
+                    # 3) Lignes texte (p, div)
+                    for p in block.find_all(["p", "div", "span"], recursive=True):
+                        txt = _clean(p.get_text(" "))
+                        if txt and ":" in txt and len(txt) < 200:
+                            _process_text_kv_line(txt)
 
         # --- Biographie (corps texte) ---
         # Chercher les grandes sections de contenu
@@ -1086,6 +1141,17 @@ class XXXBiosScraper(ScraperBase):
             or soup.find("div", id=re.compile(r"content", re.I))
         )
         if main_content:
+            # Beaucoup de pages XXXBios encodent les champs "Personal Info" sous forme de:
+            # <p><strong>Height :</strong> 5 feet ...</p>
+            for p in main_content.find_all("p"):
+                lbl = p.find(["strong", "b"])
+                if not lbl:
+                    continue
+                key = _clean(lbl.get_text()).rstrip(":").strip()
+                raw_lbl = lbl.get_text()
+                val = _clean(p.get_text(" ").replace(raw_lbl, "", 1))
+                _process_kv(key, val)
+
             bio_paragraphs = []
             trivia_lines = []
             award_lines = []
@@ -1127,24 +1193,68 @@ class XXXBiosScraper(ScraperBase):
             if award_lines:
                 data["awards"] = "\n".join(award_lines[:50])
 
+            # Awards heuristique : certaines pages listent les récompenses sous "Personal Info".
+            if not data.get("awards"):
+                inferred = []
+                for li in main_content.find_all("li"):
+                    t = _clean(li.get_text(" "))
+                    if not t:
+                        continue
+                    if re.search(r"\b(award|awards|nominee|nominat|winner)\b", t, re.I):
+                        inferred.append(t)
+                if inferred:
+                    data["awards"] = "\n".join(inferred[:80])
+
+            # Handles sociaux présents en texte (ex: "Twitter : @handle")
+            joined_text = "\n".join(bio_paragraphs[:3])
+            m_tw = re.search(r"\btwitter\b\s*[:\-]\s*@([A-Za-z0-9_]{2,30})", joined_text, re.I)
+            if m_tw and ("twitter" not in socials or not re.search(r"(twitter\.com|x\.com)", socials.get("twitter", ""), re.I)):
+                socials["twitter"] = f"https://twitter.com/{m_tw.group(1)}"
+            m_ig = re.search(r"\binstagram\b\s*[:\-]\s*@([A-Za-z0-9_.]{2,30})", joined_text, re.I)
+            if m_ig and ("instagram" not in socials or "instagram.com" not in socials.get("instagram", "").lower()):
+                socials["instagram"] = f"https://www.instagram.com/{m_ig.group(1).lstrip('@').strip('/')}/"
+            m_of = re.search(r"\bonlyfans\b\s*[:\-]\s*(https?://\S+|@[A-Za-z0-9_.]{2,30})", joined_text, re.I)
+            if m_of and "onlyfans" not in socials:
+                raw = m_of.group(1).strip()
+                if raw.startswith("http"):
+                    socials["onlyfans"] = raw
+                else:
+                    socials["onlyfans"] = f"https://onlyfans.com/{raw.lstrip('@')}"
+
             # Réseaux sociaux (liens dans le contenu)
             for a in main_content.find_all("a", href=True):
                 href = a["href"]
                 if not href.startswith("http"):
                     continue
-                lnk_l = href.lower()
-                if "instagram.com" in lnk_l:
+                host = urlparse(href).netloc.lower()
+                if _host_is(host, "instagram.com"):
                     socials["instagram"] = href
-                elif "twitter.com" in lnk_l or "x.com" in lnk_l:
+                elif _host_is(host, "twitter.com") or _host_is(host, "x.com"):
                     socials["twitter"] = href
-                elif "onlyfans.com" in lnk_l:
+                elif _host_is(host, "onlyfans.com"):
                     socials["onlyfans"] = href
-                elif "facebook.com" in lnk_l:
+                elif _host_is(host, "facebook.com"):
                     socials["facebook"] = href
-                elif "brazzers.com" in lnk_l or "naughtyamerica.com" in lnk_l or "digitalplayground.com" in lnk_l:
+                elif _host_is(host, "brazzers.com") or _host_is(host, "naughtyamerica.com") or _host_is(host, "digitalplayground.com"):
                     ext_links.append(href)
-                elif href.startswith("http") and "xxxbios.com" not in lnk_l:
+                elif href.startswith("http") and not _host_is(host, "xxxbios.com"):
                     ext_links.append(href)
+
+        # Fallback global : certains templates placent les liens sociaux hors du main_content
+        if not socials:
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                if not href.startswith("http"):
+                    continue
+                host = urlparse(href).netloc.lower()
+                if _host_is(host, "instagram.com") and "instagram" not in socials:
+                    socials["instagram"] = href
+                elif (_host_is(host, "twitter.com") or _host_is(host, "x.com")) and "twitter" not in socials:
+                    socials["twitter"] = href
+                elif _host_is(host, "onlyfans.com") and "onlyfans" not in socials:
+                    socials["onlyfans"] = href
+                elif _host_is(host, "facebook.com") and "facebook" not in socials:
+                    socials["facebook"] = href
 
         # Awards depuis section dédiée (tables)
         if not data.get("awards"):
@@ -1160,7 +1270,41 @@ class XXXBiosScraper(ScraperBase):
             if award_rows:
                 data["awards"] = "\n".join(award_rows)
 
+        # Awards fallback : sections "Awards" / "Awards and nominations" en listes
+        if not data.get("awards"):
+            header_aw = _find_heading(r"\bAwards\b")
+            if header_aw:
+                block = header_aw.find_next(lambda t: getattr(t, "name", None) in ("ul", "ol", "div", "section", "table"))
+                lines = []
+                if block:
+                    for li in block.find_all("li"):
+                        txt = _clean(li.get_text(" "))
+                        if txt:
+                            lines.append(txt)
+                if lines:
+                    data["awards"] = "\n".join(lines[:80])
+
         data["discovered_urls"] = list(dict.fromkeys(ext_links))
+
+        # Filtre anti-liens génériques du site (ex: twitter.com/XXXBios)
+        def _is_generic_site_account(social_url: str) -> bool:
+            if not social_url or not social_url.startswith("http"):
+                return False
+            try:
+                parsed = urlparse(social_url)
+                host = (parsed.netloc or "").lower()
+                path = (parsed.path or "").strip("/")
+                first = (path.split("/", 1)[0] if path else "").lower()
+                # Conserver très strict: on ne filtre que les handles du site.
+                if "xxxbios" in first:
+                    return True
+                if "xxxbios" in host:
+                    return True
+            except Exception:
+                return False
+            return False
+
+        socials = {k: v for k, v in socials.items() if not _is_generic_site_account(v)}
         data["socials"] = socials
         return data
 
@@ -1192,18 +1336,22 @@ class ScraperOrchestrator:
                 return scraper
         return None
 
-    def scrape_all(self, urls: List[str], progress_callback=None, performer_name: str = "") -> List[Dict[str, Any]]:
+    def scrape_all(self, urls: List[str], progress_callback=None, performer_name: str = "", auto_add_fallback_sources: bool = True) -> List[Dict[str, Any]]:
         """
         Scrape toutes les URLs fournies.
-        Si performer_name est fourni, auto-construit les URLs Boobpedia et XXXBios
-        si elles ne sont pas déjà dans la liste.
+        Si performer_name est fourni ET auto_add_fallback_sources=True, auto-construit les URLs 
+        Boobpedia et XXXBios si elles ne sont pas déjà dans la liste.
         Retourne une liste de dicts (un par source).
+        
+        Args:
+            auto_add_fallback_sources: Si False, ne pas auto-ajouter Boobpedia/XXXBios
+                                       (respecte la stratégie 2-tier)
         """
         # Auto-découverte Boobpedia / XXXBios si performer_name fourni
         urls_lower = [u.lower() for u in urls]
         extra_urls = []
 
-        if performer_name:
+        if performer_name and auto_add_fallback_sources:
             # Boobpedia : https://www.boobpedia.com/boobs/Firstname_Lastname
             if not any("boobpedia.com" in u for u in urls_lower):
                 slug = re.sub(r"\s+", "_", performer_name.strip().title())
@@ -1251,6 +1399,11 @@ class ScraperOrchestrator:
 class DataMerger:
     """
     Fusionne intelligemment les données provenant de plusieurs sources.
+    
+    Stratégie v2 (basée sur analyse "Analyse forces sources.md"):
+    - 3 sources primaires : IAFD (75%), FreeOnes (65%), TheNude (70%)
+    - Complétude combinée : 95% (19/20 champs)
+    - Priorités optimisées par catégorie selon les forces de chaque source
 
     Catégories de résultats :
     - confirmed  : même valeur dans ≥2 sources
@@ -1261,16 +1414,49 @@ class DataMerger:
     # Champs pour lesquels on accepte des listes (fusion au lieu de conflit)
     LIST_FIELDS = {"aliases", "thenude_tags", "activities", "trivia"}
 
-    # Priorité des sources (index bas = priorité haute)
-    SOURCE_PRIORITY = ["IAFD", "FreeOnes", "Babepedia", "TheNude"]
+    # Priorité des sources - 4 sources 1ère passe
+    SOURCE_PRIORITY = ["IAFD", "FreeOnes", "TheNude", "XXXBios"]
 
-    # Pour certains champs, on préfère d'autres sources qu'IAFD
+    # Priorités par champ (basées sur analyse forces sources)
     FIELD_PRIORITY_OVERRIDE = {
-        "ethnicity": ["FreeOnes", "Babepedia", "TheNude", "IAFD"],
-        "hair":      ["FreeOnes", "Babepedia", "IAFD", "TheNude"],
-        "tattoos":   ["Babepedia", "FreeOnes", "IAFD", "TheNude"],
-        "trivia":    ["Babepedia", "TheNude", "IAFD", "FreeOnes"],
-        "bio_raw":   ["Babepedia", "IAFD", "FreeOnes", "TheNude"]
+        # Trivia : FreeOnes champion (100%)
+        "trivia":       ["FreeOnes", "TheNude", "IAFD", "XXXBios"],
+        
+        # Bios/Details : TheNude champion bios studio (100%), FreeOnes 2ème (80%), IAFD 3ème (20%)
+        # XXXBios est un bon fallback (bio + infos perso) si TheNude/FreeOnes sont faibles
+        "bio_raw":      ["TheNude", "FreeOnes", "XXXBios", "IAFD"],
+        "details":      ["TheNude", "FreeOnes", "XXXBios", "IAFD"],
+
+        # Awards : FreeOnes est souvent le plus propre, XXXBios utile en complément
+        "awards":       ["FreeOnes", "XXXBios", "IAFD", "TheNude"],
+        
+        # Tattoos : IAFD champion (90% descriptions détaillées), TheNude 2ème (80%)
+        "tattoos":      ["IAFD", "TheNude", "FreeOnes", "XXXBios"],
+        
+        # Piercings : TheNude champion (80% historique), IAFD 2ème
+        "piercings":    ["TheNude", "IAFD", "FreeOnes", "XXXBios"],
+        
+        # Caractéristiques physiques : FreeOnes champion (100% fiable)
+        "hair_color":   ["FreeOnes", "IAFD", "TheNude", "XXXBios"],
+        "eye_color":    ["FreeOnes", "IAFD", "TheNude", "XXXBios"],
+        "fake_tits":    ["FreeOnes", "IAFD", "TheNude", "XXXBios"],
+        
+        # Mesures : IAFD/TheNude égalité (80% dual format)
+        "measurements": ["IAFD", "TheNude", "FreeOnes", "XXXBios"],
+        "height":       ["IAFD", "TheNude", "FreeOnes", "XXXBios"],
+        "weight":       ["IAFD", "TheNude", "FreeOnes", "XXXBios"],
+        
+        # Aliases : TheNude champion (4 variations), FreeOnes 2ème (3)
+        "aliases":      ["TheNude", "FreeOnes", "IAFD", "XXXBios"],
+        
+        # Ethnicité : IAFD/FreeOnes égalité
+        "ethnicity":    ["IAFD", "FreeOnes", "TheNude", "XXXBios"],
+        
+        # Métadonnées biographiques : IAFD champion (100%)
+        "birthdate":    ["IAFD", "FreeOnes", "TheNude", "XXXBios"],
+        "country":      ["IAFD", "FreeOnes", "TheNude", "XXXBios"],
+        "career_length":["IAFD", "FreeOnes", "TheNude", "XXXBios"],
+        "death_date":   ["IAFD", "FreeOnes", "TheNude", "XXXBios"],
     }
 
     def merge(self, sources: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1306,9 +1492,10 @@ class DataMerger:
         awards_text = ""
 
         for field, source_vals in field_values.items():
-            # Awards : champ spécial, on garde la valeur IAFD brute
+            # Awards : champ textuel, choisir selon priorité (FreeOnes/XXXBios/IAFD...)
             if field == "awards":
-                awards_text = source_vals.get("IAFD", "")
+                chosen_val = self._pick_by_priority(source_vals, field=field)
+                merged[field] = chosen_val
                 continue
 
             # Champs list : union
@@ -1358,7 +1545,6 @@ class DataMerger:
             "confirmed": confirmed,
             "conflicts": conflicts,
             "new_fields": new_fields,
-            "awards": awards_text,
             "socials": self._merge_socials(sources),
             "discovered_urls": self._merge_discovered_urls(sources)
         }
@@ -1428,9 +1614,9 @@ class DataMerger:
                 src, val = list(src_val.items())[0]
                 lines.append(f"  {field}: {val}  (source: {src})")
 
-        if merge_result.get("awards"):
-            lines.append("\n🏆 AWARDS (depuis IAFD) :")
-            lines.append(merge_result["awards"])
+        if merged.get("awards"):
+            lines.append("\n🏆 AWARDS (fusion) :")
+            lines.append(str(merged.get("awards") or ""))
 
         return "\n".join(lines)
 
@@ -1483,72 +1669,3 @@ class AwardsCleaner:
         return result
 
 
-# ===========================================================================
-# TEST / DÉMO (exécution directe)
-# ===========================================================================
-
-if __name__ == "__main__":
-    import sys
-    import os
-
-    print("=== TEST SCRAPERS DEPUIS FICHIERS LOCAUX ===\n")
-
-    # Chemins vers les fichiers HTML de test
-    test_files = {
-        "IAFD":      "/tmp/urlscraping/bridgette b - iafd.com.html",
-        "FreeOnes":  "/tmp/urlscraping/Bridgette B bio _ Read about her profile at FreeOnes.html",
-        "TheNude":   "/tmp/urlscraping/Bridgette B nude from Scoreland and Twistys at theNude.com.html",
-        "Babepedia": "/mnt/user-data/uploads/Bridgette_B_-_Free_nude_pics__galleries___more_at_Babepedia.html",
-    }
-
-    scrapers_map = {
-        "IAFD":      IAFDScraper(),
-        "FreeOnes":  FreeOnesScraper(),
-        "TheNude":   TheNudeScraper(),
-        "Babepedia": BabepediaScraper(),
-    }
-
-    results = []
-    for source_name, filepath in test_files.items():
-        if not os.path.exists(filepath):
-            print(f"[SKIP] Fichier manquant : {filepath}")
-            continue
-        scraper = scrapers_map[source_name]
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-            html = f.read()
-        result = scraper.scrape_from_html(html, url=f"file://{filepath}")
-        results.append(result)
-        print(f"\n{'='*50}")
-        print(f"SOURCE : {source_name}")
-        print(f"{'='*50}")
-        for k, v in result.items():
-            if k in ("source", "url"):
-                continue
-            if k == "awards":
-                print(f"  awards: [voir section dédiée]")
-            elif isinstance(v, list):
-                print(f"  {k}: {', '.join(str(x) for x in v)}")
-            else:
-                print(f"  {k}: {v}")
-
-    # Fusion
-    if results:
-        print("\n\n" + "="*60)
-        print("FUSION DES SOURCES")
-        print("="*60)
-        merger = DataMerger()
-        merged = merger.merge(results)
-        print(merger.format_report(merged))
-
-        # Nettoyage awards
-        if merged.get("awards"):
-            print("\n\n" + "="*60)
-            print("AWARDS STRUCTURÉS")
-            print("="*60)
-            cleaner = AwardsCleaner()
-            structured = cleaner.to_structured_list(merged["awards"])
-            for award in structured[:10]:
-                status = "🏆" if award["type"] == "Winner" else "  "
-                print(f"  {status} [{award['ceremony']}] {award['year']} - {award['type']}: {award['category']}")
-            if len(structured) > 10:
-                print(f"  ... et {len(structured)-10} awards supplémentaires")

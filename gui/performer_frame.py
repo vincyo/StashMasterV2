@@ -45,6 +45,7 @@ class PerformerFrame(ttk.Frame):
         # Données
         self.stash_data: Dict[str, Any] = {}
         self.field_vars: Dict[str, Dict[str, Any]] = {}
+        self.use_fallback_sources = False  # Par défaut: sources primaires uniquement
         
         # Widgets
         self.notebook: ttk.Notebook = None # type: ignore
@@ -643,6 +644,7 @@ class PerformerFrame(ttk.Frame):
             
             if dlg.final_urls is not None:
                 performer_data["urls"] = dlg.final_urls
+                self.use_fallback_sources = dlg.use_fallback_sources  # Store preference
             # Sinon, on garde les URLs d'origine (si l'utilisateur a fermé sans finir ?)
 
         self.stash_data = performer_data
@@ -862,6 +864,7 @@ class PerformerFrame(ttk.Frame):
             
             if dlg.final_urls is not None:
                 data["urls"] = dlg.final_urls
+                self.use_fallback_sources = dlg.use_fallback_sources  # Store preference
             # Sinon, on garde les URLs d'origine (si l'utilisateur a fermé sans finir)
 
         self.stash_data = data
@@ -1237,8 +1240,67 @@ class PerformerFrame(ttk.Frame):
             self.after(0, lambda: self.progress_bar.configure(value=0))
             self.after(0, lambda: self.status_label.configure(text="Initialisation..."))
             
-            # Scraping avec auto-découverte Boobpedia/XXXBios
-            results = self.orchestrator.scrape_all(urls, progress_callback=update_progress, performer_name=performer_name)
+            # Scraping en 2 passes:
+            # - Passe 1 (par défaut): IAFD, FreeOnes, TheNude, XXXBios
+            # - Passe 2 (si activée): Babepedia, Boobpedia
+            urls_list = urls if isinstance(urls, list) else []
+            # Robustesse: si aucune URL mais un nom, pré-extraire les 6 sources via URLManager
+            if (not urls_list) and performer_name:
+                try:
+                    urls_list = self.url_manager.process_performer_urls(
+                        existing_urls=[],
+                        performer_name=performer_name,
+                        use_fallback_sources=True,
+                    )
+                except Exception:
+                    urls_list = []
+
+            def _is_domain(u: str, needle: str) -> bool:
+                return needle in (u or "").lower()
+
+            pass1_urls = [
+                u for u in urls_list
+                if _is_domain(u, "iafd.com")
+                or _is_domain(u, "freeones.")
+                or _is_domain(u, "thenude.com")
+                or _is_domain(u, "xxxbios.com")
+            ]
+            fallback_urls = [
+                u for u in urls_list
+                if _is_domain(u, "babepedia.com") or _is_domain(u, "boobpedia.com")
+            ]
+
+            # Toujours lancer la 1ère passe avec les URLs déjà extraites.
+            results = []
+            pass1_total = max(len(pass1_urls), 1)
+
+            def pass1_progress(current, total, source_name):
+                update_progress(current, total, source_name)
+
+            results_pass1 = self.orchestrator.scrape_all(
+                pass1_urls,
+                progress_callback=pass1_progress,
+                performer_name=performer_name,
+                auto_add_fallback_sources=False,
+            )
+            if results_pass1:
+                results.extend(results_pass1)
+
+            # Passe 2: uniquement si l'utilisateur a activé les sources de secours
+            if self.use_fallback_sources and fallback_urls:
+                pass2_total = len(fallback_urls)
+
+                def pass2_progress(current, total, source_name):
+                    update_progress(pass1_total + current, pass1_total + pass2_total, source_name)
+
+                results_pass2 = self.orchestrator.scrape_all(
+                    fallback_urls,
+                    progress_callback=pass2_progress,
+                    performer_name=performer_name,
+                    auto_add_fallback_sources=False,
+                )
+                if results_pass2:
+                    results.extend(results_pass2)
             
             if not results:
                 self.after(0, lambda: self.status_label.configure(text="Échec"))
@@ -1610,6 +1672,10 @@ class PerformerFrame(ttk.Frame):
         
         # Dates : formats YYYY-MM-DD
         if field_key in ['birthdate', 'deathdate']:
+            # Valeurs sentinelles Stash/DB pour "pas de date"
+            if value in {'0001-01-01', '0000-00-00', '01-01-0001'}:
+                return ""
+
             from datetime import datetime
             for fmt in ("%B %d, %Y", "%b %d, %Y", "%Y-%m-%d", "%d/%m/%Y", "%Y"):
                 try:
@@ -1713,7 +1779,21 @@ class PerformerFrame(ttk.Frame):
         
         # Height/Weight : format avec unités
         if field_key in ['height', 'weight']:
-            # Enlever espaces inutiles
+            # Extraire la valeur principale (cm/kg) même si texte collé
+            if field_key == 'height':
+                m_cm = re.search(r'(\d{2,3})\s*cm', value, re.I)
+                if m_cm:
+                    return m_cm.group(1)
+            if field_key == 'weight':
+                m_kg = re.search(r'(\d{2,3})\s*kg', value, re.I)
+                if m_kg:
+                    return m_kg.group(1)
+
+            # Fallback: première valeur numérique plausible
+            m_num = re.search(r'\b(\d{2,3})\b', value)
+            if m_num:
+                return m_num.group(1)
+
             return re.sub(r'\s+', ' ', value).strip()
         
         # Par défaut: juste trim et normaliser espaces
@@ -1737,7 +1817,22 @@ class PerformerFrame(ttk.Frame):
                 continue
 
             low = p.lower()
-            if 'nombres en francais' in low:
+            # Filtrer les parasites de type "conseils IA" / prompts / méta-texte
+            noisy_markers = [
+                'nombres en francais',
+                'cette phrase est deja en francais',
+                'cette phrase est déjà en français',
+                'pour améliorer le style',
+                'pour ameliorer le style',
+                'je vous recommande',
+                'taille:', 'style:', 'contexte:',
+                'par exemple',
+                'il est préférable', 'il est preferable',
+                'si le style québécois', 'si le style quebecois',
+            ]
+            if any(marker in low for marker in noisy_markers):
+                continue
+            if re.match(r'^\d+[\.)]\s*', low):
                 continue
 
             if field_key == 'piercings':
@@ -1745,6 +1840,16 @@ class PerformerFrame(ttk.Frame):
                 p = re.sub(r'\bbelly\s*button\b', 'Nombril', p, flags=re.I)
                 p = re.sub(r'\bnipples?\b', 'Tétons', p, flags=re.I)
                 p = re.sub(r'\btit[s]?\b', 'Tétons', p, flags=re.I)
+                p = re.sub(r'\bmamelons?\b', 'Tétons', p, flags=re.I)
+                p = re.sub(r'\(\s*style\s+qu[ée]b[ée]cois\s*/\s*qc\s*\)', '', p, flags=re.I)
+                # "Nombril : Nombril" -> "Nombril"
+                m_same = re.match(r'^\s*([^:]+?)\s*:\s*\1\s*$', p, flags=re.I)
+                if m_same:
+                    p = m_same.group(1).strip()
+
+            if field_key == 'tattoos':
+                p = re.sub(r'\bsous la nuque\b', 'Sous la nuque', p, flags=re.I)
+                p = re.sub(r'\bsous le cou\b', 'Sous la nuque', p, flags=re.I)
 
             p = re.sub(r'\s+', ' ', p).strip(' ,.')
             if len(p) < 2:
@@ -1768,7 +1873,9 @@ class PerformerFrame(ttk.Frame):
             
         mapping = {
             "united states": "US", "usa": "US",
+            "etats-unis": "US", "états-unis": "US", "états-unis d'amérique": "US", "etats-unis d'amerique": "US",
             "united kingdom": "UK", "uk": "UK",
+            "royaume-uni": "UK",
             "france": "FR", "germany": "DE", "spain": "ES",
             "italy": "IT", "canada": "CA", "brazil": "BR",
             "russia": "RU", "japan": "JP", "australia": "AU",

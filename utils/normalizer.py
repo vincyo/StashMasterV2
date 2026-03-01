@@ -429,6 +429,19 @@ def clean_awards_field(awards_text: str) -> str:
     nominees.sort(key=lambda l: (_extract_org_rank(l), _extract_year(l), l.lower()))
     others.sort(key=lambda l: (_extract_year(l), _extract_org_rank(l), l.lower()))
 
-    final_lines = winners + nominees + others
+    final_lines = []
+    if winners:
+        final_lines.append("Winner")
+        final_lines.extend(winners)
+    if nominees:
+        if final_lines:
+            final_lines.append("")
+        final_lines.append("Nominee")
+        final_lines.extend(nominees)
+    if others:
+        if final_lines:
+            final_lines.append("")
+        final_lines.extend(others)
+
     return "\n".join(final_lines)
 

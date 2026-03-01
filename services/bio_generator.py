@@ -654,12 +654,37 @@ Renvoie UNIQUEMENT la biographie modifiée, sans commentaires."""
 
     def translate_hybrid(self, text: str, field_name: str = "") -> str:
         """Tente Google Translate, bascule sur Ollama si échec ou contenu vide."""
+        def _is_advice_noise(src: str, candidate: str, fld: str) -> bool:
+            if not candidate:
+                return True
+            low = candidate.lower()
+            markers = [
+                "cette phrase est déjà en français", "cette phrase est deja en francais",
+                "pour améliorer le style", "pour ameliorer le style",
+                "je vous recommande", "par exemple", "il est préférable", "il est preferable",
+                "si le style québécois", "si le style quebecois",
+                "1.", "2.", "3."
+            ]
+            if any(m in low for m in markers):
+                return True
+
+            # Si sortie beaucoup plus longue que l'entrée sur body-art, c'est souvent du commentaire
+            fld_low = (fld or "").lower()
+            if fld_low in ("tatouages", "tattoos", "piercings") and len(candidate) > max(120, int(len(src) * 2.2)):
+                return True
+
+            return False
+
         # On tente Google d'abord (recommandation utilisateur pour contenu peu explicite)
         res = self.translate_google(text)
         
         # Si Google échoue ou si le résultat est suspect (trop court par rapport à l'original)
         # ou si on veut forcer le style QC via Ollama
         if not res or res == text or len(res) < len(text) * 0.3:
-            return self.translate_qc(text, field_name)
-            
+            res = self.translate_qc(text, field_name)
+
+        # Garde-fou contre les réponses "conseils" au lieu d'une traduction
+        if _is_advice_noise(text, res, field_name):
+            return text
+
         return res
