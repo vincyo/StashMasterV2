@@ -110,6 +110,11 @@ def clean_award_text(raw_text: str) -> str:
         return ""
     
     text = raw_text.strip()
+
+    # Nettoyage rapide des tokens vides fréquents avant tout parsing
+    # Exemple: "() [] []" ou "[ ]" collés dans certains scrapings
+    text = re.sub(r'\[\s*\]', '', text)
+    text = re.sub(r'\(\s*\)', '', text)
     
     # Détecter si déjà au format "YYYY [ORG] Award - Category [Status]"
     # Si oui, juste normaliser et retourner
@@ -119,6 +124,7 @@ def clean_award_text(raw_text: str) -> str:
         text = re.sub(r'\s+', ' ', text).strip()
         # Enlever les doubles brackets vides "[]"
         text = re.sub(r'\[\s*\]', '', text).strip()
+        text = re.sub(r'\(\s*\)', '', text).strip()
         return text
     
     # 1. Séparer les blocs collés (ex: "Awards2015" -> "Awards 2015")
@@ -165,6 +171,11 @@ def clean_award_text(raw_text: str) -> str:
     
     # 6. Détecter statut (Winner/Nominee)
     status = None
+    # Cas ambigu: les deux statuts apparaissent (souvent un artefact HTML) -> ignorer le statut
+    if re.search(r'\bWinner\b', text, re.I) and re.search(r'\bNominee\b', text, re.I) and not re.search(r'\b(Winner|Nominee)\s*:', text, re.I):
+        text = re.sub(r'\bWinner\b', '', text, flags=re.I)
+        text = re.sub(r'\bNominee\b', '', text, flags=re.I)
+        status = None
     if re.search(r'\bWinner\s*:', text, re.I):
         status = "Winner"
         text = re.sub(r'\bWinner\s*:\s*', '', text, flags=re.I)
@@ -191,6 +202,12 @@ def clean_award_text(raw_text: str) -> str:
     
     text = re.sub(r'\s+', ' ', text).strip()
     text = text.lstrip('- :').strip()
+
+    # Enlever les restes de tokens vides et ponctuation parasite
+    text = re.sub(r'\[\s*\]', '', text)
+    text = re.sub(r'\(\s*\)', '', text)
+    text = re.sub(r'\s{2,}', ' ', text).strip()
+    text = re.sub(r'[.]{3,}$', '', text).strip()
     
     # 8. Si aucune catégorie restante, ignorer
     if not text or len(text) < 5:
@@ -282,6 +299,10 @@ def clean_awards_field(awards_text: str) -> str:
         
         # Si plusieurs "Best" ou collisions après parenthèses, séparer
         if best_patterns > 2 or parenthesis_collisions > 0:
+            # Séparer aussi sur les enchaînements "... Best X Best Y ..." (souvent collés en une ligne)
+            if best_patterns > 2:
+                line = re.sub(r'\s+(?=Best\s+)', r'\n', line)
+
             # Séparer quand un mot title-case suit immédiatement une parenthèse fermante
             line = re.sub(r'\)([A-Z][a-z]+)', r')\n\1', line)
             # Séparer aussi sur les patterns ")Best" ou ")Nominee:" ou ")Winner:"
@@ -315,6 +336,8 @@ def clean_awards_field(awards_text: str) -> str:
             prefix_match = re.match(r'^(.*?(?:AVN|XBIZ|XRCO|NightMoves|Spank Bank|PornHub|FAME)\s*Awards?\s*\d{4})', line, re.I)
             if not prefix_match:
                 prefix_match = re.match(r'^(\d{4}(?:\s+\w+)?\s*Awards?)', line)
+            if not prefix_match:
+                prefix_match = re.match(r'^(\d{4})', line)
             prefix = prefix_match.group(1).strip() if prefix_match else ""
             
             for subline in sublines:
@@ -385,13 +408,34 @@ def clean_awards_field(awards_text: str) -> str:
             if cleaned and len(cleaned) > 15:
                 cleaned_lines.append(cleaned)
     
-    # Dédupliquer
-    unique_lines = []
-    seen = set()
+    # Dédupliquer (clé canonique) en ignorant le statut pour éviter doublons
+    # et en préférant la version avec statut si disponible.
+    unique_lines: List[str] = []
+    canonical_to_index: Dict[str, int] = {}
+
+    def _canonical_key(s: str) -> str:
+        low = s.lower()
+        low = re.sub(r'\[(winner|nominee)\]', '', low)
+        low = re.sub(r'\b(winner|nominee)\b', '', low)
+        return re.sub(r'[^a-z0-9]+', '', low)
+
+    def _has_status(s: str) -> bool:
+        l = s.lower()
+        return '[winner]' in l or '[nominee]' in l
+
     for line in cleaned_lines:
-        if line not in seen:
-            seen.add(line)
+        key = _canonical_key(line)
+        if not key:
+            continue
+        if key not in canonical_to_index:
+            canonical_to_index[key] = len(unique_lines)
             unique_lines.append(line)
+            continue
+
+        # Déjà vu: garder la version avec statut si l'autre ne l'a pas
+        idx = canonical_to_index[key]
+        if _has_status(line) and not _has_status(unique_lines[idx]):
+            unique_lines[idx] = line
 
     # Regrouper et trier : Winners d'abord (chronologique), puis Nominees
     # (par prestige), puis autres lignes non classées.
@@ -429,19 +473,7 @@ def clean_awards_field(awards_text: str) -> str:
     nominees.sort(key=lambda l: (_extract_org_rank(l), _extract_year(l), l.lower()))
     others.sort(key=lambda l: (_extract_year(l), _extract_org_rank(l), l.lower()))
 
-    final_lines = []
-    if winners:
-        final_lines.append("Winner")
-        final_lines.extend(winners)
-    if nominees:
-        if final_lines:
-            final_lines.append("")
-        final_lines.append("Nominee")
-        final_lines.extend(nominees)
-    if others:
-        if final_lines:
-            final_lines.append("")
-        final_lines.extend(others)
-
-    return "\n".join(final_lines)
+    # Sortie: uniquement des lignes d'awards, sans en-têtes "Winner/Nominee".
+    final_lines = winners + nominees + others
+    return "\n".join(final_lines).strip()
 

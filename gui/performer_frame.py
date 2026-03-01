@@ -268,7 +268,8 @@ class PerformerFrame(ttk.Frame):
         # Header de la grille
         headers_labels = ["Scrap", "Champ", "Valeur Stash"]
         # Sources fixes (priorité DataMerger)
-        source_names = ["IAFD", "FreeOnes", "TheNude", "Babepedia", "Boobpedia", "XXXBios"]
+        # Groupe 1 (sources principales) en ordre alphabétique, puis Groupe 2 (secours)
+        source_names = ["FreeOnes", "IAFD", "TheNude", "XXXBios", "Babepedia", "Boobpedia"]
         
         header_fonts = ('Segoe UI', 10, 'bold')
         for col, text in enumerate(headers_labels):
@@ -1369,7 +1370,8 @@ class PerformerFrame(ttk.Frame):
                 if s_val: res[s_key] = s_val
         
         # 2. Mise à jour de la grille (limité aux 6 sources principales configurées)
-        source_order = ["IAFD", "FreeOnes", "TheNude", "Babepedia", "Boobpedia", "XXXBios"]
+        # Doit matcher l'ordre des colonnes créées dans _create_metadata_tab()
+        source_order = ["FreeOnes", "IAFD", "TheNude", "XXXBios", "Babepedia", "Boobpedia"]
         # Réordonner les résultats selon source_order pour que chaque source tombe dans la bonne colonne
         ordered_results = []
         result_by_source = {r.get('source', ''): r for r in results}

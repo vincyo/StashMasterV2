@@ -8,6 +8,7 @@ import os
 import re
 import json
 import urllib.request
+import urllib.error
 import requests
 import gc
 from typing import Dict, List, Optional
@@ -58,6 +59,10 @@ class BioGenerator:
         self.ollama_num_gpu = int(os.getenv("OLLAMA_NUM_GPU", "999"))
         self.ollama_num_thread = int(os.getenv("OLLAMA_NUM_THREAD", "8"))
         self.gemini_key = self._load_gemini_key()
+        self.gemini_search_enabled = True
+        self._gemini_disabled = False
+        self._gemini_warned_search_disabled = False
+        self._gemini_warned_disabled = False
         if self.gemini_key:
             print("[BioGenerator] Clé Gemini chargée — génération Google avec IA activée.")
         else:
@@ -152,8 +157,10 @@ class BioGenerator:
 
     def _call_gemini(self, user_prompt: str, use_search: bool = True) -> Optional[str]:
         """Appelle Gemini 2.0 Flash, avec grounding Google Search si use_search=True."""
-        if not self.gemini_key:
+        if not self.gemini_key or self._gemini_disabled:
             return None
+
+        do_search = bool(use_search and self.gemini_search_enabled)
         url = GEMINI_API_URL.format(model=GEMINI_MODEL, key=self.gemini_key)
         payload: Dict = {
             "system_instruction": {"parts": [{"text": SYSTEM_PROMPT_BIO}]},
@@ -163,7 +170,7 @@ class BioGenerator:
                 "maxOutputTokens": 1500,
             },
         }
-        if use_search:
+        if do_search:
             # Grounding Google Search : Gemini va chercher sur le web pour enrichir la bio
             payload["tools"] = [{"google_search": {}}]
 
@@ -177,6 +184,28 @@ class BioGenerator:
                 result = json.loads(resp.read())
             text = result["candidates"][0]["content"]["parts"][0]["text"]
             return text.strip()
+        except urllib.error.HTTPError as e:
+            # 401/403 arrivent souvent quand l'API key n'a pas les droits pour le grounding google_search.
+            code = getattr(e, "code", None)
+
+            # Si le grounding est activé et qu'on reçoit 403/401, on retente une fois sans search.
+            if code in (401, 403) and do_search:
+                self.gemini_search_enabled = False
+                if not self._gemini_warned_search_disabled:
+                    self._gemini_warned_search_disabled = True
+                    print("[GEMINI] 403/401 avec google_search — retry sans search et grounding désactivé pour la session.")
+                return self._call_gemini(user_prompt, use_search=False)
+
+            # Si même sans search on est en 401/403, on désactive Gemini pour éviter le spam.
+            if code in (401, 403):
+                self._gemini_disabled = True
+                if not self._gemini_warned_disabled:
+                    self._gemini_warned_disabled = True
+                    print("[GEMINI] 403/401 persistant — Gemini désactivé pour la session (clé/droits à vérifier).")
+                return None
+
+            print(f"[GEMINI] Erreur HTTP {code} : {e}")
+            return None
         except Exception as e:
             print(f"[GEMINI] Erreur : {e}")
             return None

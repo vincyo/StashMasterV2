@@ -22,8 +22,8 @@ class URLManager:
     
     # 4 sources 1ère passe
     PRIMARY_SOURCES = [
-        ("iafd.com", IAFDScraper),        # 75% - Métadonnées biographiques
         ("freeones.xxx", FreeOnesScraper), # 65% - Awards, trivia, tags
+        ("iafd.com", IAFDScraper),        # 75% - Métadonnées biographiques
         ("thenude.com", TheNudeScraper),   # 70% - Bios studio, aliases
         ("xxxbios.com", XXXBiosScraper),   # Infos perso + bio + awards + réseaux sociaux
     ]
@@ -540,6 +540,46 @@ class URLOptimizer:
         "cash.app", "tumblr.com", "threads.net", "facebook.com"
     }
 
+    # Domaines profils autorisés (pas de scènes/galeries externes)
+    GROUP1_PROFILE_DOMAINS = {
+        "iafd.com",
+        "freeones.com",
+        "freeones.xxx",
+        "thenude.com",
+        "xxxbios.com",
+    }
+
+    GROUP2_PROFILE_DOMAINS = {
+        "babepedia.com",
+        "boobpedia.com",
+    }
+
+    # Profils "plateformes/cam" (pas des scènes/galeries)
+    OTHER_PROFILE_DOMAINS = {
+        "pornhub.com",
+        "manyvids.com",
+        "fancentro.com",
+        "camsoda.com",
+        "brazzers.com",
+        "digitalplayground.com",
+        "realitykings.com",
+        "mofosnetwork.com",
+        "bangbrosnetwork.com",
+        "realvr.com",
+        "badoinkvr.com",
+        "dorcelvision.com",
+        "intimatepov.com",
+        "indexxx.com",
+        "data18.com",
+        "adultfilmdatabase.com",
+    }
+
+    ALLOWED_PROFILE_DOMAINS = GROUP1_PROFILE_DOMAINS | GROUP2_PROFILE_DOMAINS | OTHER_PROFILE_DOMAINS
+
+    @staticmethod
+    def _domain_matches(domain: str, root: str) -> bool:
+        return domain == root or domain.endswith(f".{root}")
+
     def clean_url(self, url: str) -> str:
         """Supprime les paramètres de tracking et normalise l'URL"""
         from urllib.parse import urlparse, urlunparse
@@ -572,8 +612,12 @@ class URLOptimizer:
         path = urlparse(url).path.lower()
         
         # Réseaux sociaux: acceptés comme groupe séparé
-        if any(domain == d or domain.endswith(f".{d}") for d in self.SOCIAL_DOMAINS):
+        if any(self._domain_matches(domain, d) for d in self.SOCIAL_DOMAINS):
             return True
+
+        # Profils: n'accepter que les domaines attendus du workflow
+        if domain not in self.ALLOWED_PROFILE_DOMAINS:
+            return False
 
         # Validation stricte pour certains domaines
         if domain == "xxxbios.com":
@@ -599,6 +643,82 @@ class URLOptimizer:
             
         if domain == "boobpedia.com" and "/boobs/" not in url:
             return False
+
+        # Plateformes/cam: patterns de profil
+        if domain == "pornhub.com":
+            # ex: /pornstar/abigail-mac
+            if not re.search(r'^/pornstar/[a-z0-9][a-z0-9-]+/?$', path, re.I):
+                return False
+
+        if domain == "manyvids.com":
+            # ex: /Profile/338491/AbigailMac/About
+            if not re.search(r'^/profile/\d+/[^/]+(?:/about)?/?$', path, re.I):
+                return False
+
+        if domain == "fancentro.com":
+            # ex: /abigailmac ou /abigailmac/about
+            if not re.search(r'^/[a-z0-9][a-z0-9_.-]+(?:/about)?/?$', path, re.I):
+                return False
+
+        if domain == "camsoda.com":
+            # ex: /abigailmac
+            if not re.search(r'^/[a-z0-9][a-z0-9_.-]+/?$', path, re.I):
+                return False
+
+        if domain == "realitykings.com":
+            # ex: /model/1779/abigail-mac
+            if not re.search(r'^/model/\d+/.+/?$', path, re.I):
+                return False
+
+        if domain in ("mofosnetwork.com", "bangbrosnetwork.com"):
+            # ex: /model/1779/abigail-mac
+            if not re.search(r'^/model/\d+/.+/?$', path, re.I):
+                return False
+
+        if domain == "brazzers.com":
+            # ex: /profile/view/id/1965/abigail-mac
+            if not re.search(r'^/profile/view/id/\d+/.+/?$', path, re.I):
+                return False
+
+        if domain == "digitalplayground.com":
+            # ex: /modelprofile/1779/abigail-mac
+            if not re.search(r'^/modelprofile/\d+/.+/?$', path, re.I):
+                return False
+
+        if domain == "realvr.com":
+            # ex: /pornstar/abigailmac
+            if not re.search(r'^/pornstar/[a-z0-9][a-z0-9_.-]+/?$', path, re.I):
+                return False
+
+        if domain == "badoinkvr.com":
+            # ex: /vr-pornstar/abigailmac
+            if not re.search(r'^/vr-pornstar/[a-z0-9][a-z0-9_.-]+/?$', path, re.I):
+                return False
+
+        if domain == "dorcelvision.com":
+            # ex: /en/pornstars-women/abigail-mac
+            if not re.search(r'^/(?:[a-z]{2}/)?pornstars-[^/]+/.+/?$', path, re.I):
+                return False
+
+        if domain == "intimatepov.com":
+            # ex: /en/pornstars/1499-abigail-mac
+            if not re.search(r'^/(?:[a-z]{2}/)?pornstars/\d+-[^/]+/?$', path, re.I):
+                return False
+
+        if domain == "indexxx.com":
+            # ex: /m/abigail-mac
+            if not re.search(r'^/m/[a-z0-9][a-z0-9-]+/?$', path, re.I):
+                return False
+
+        if domain == "data18.com":
+            # ex: /name/abigail-mac
+            if not re.search(r'^/name/[a-z0-9][a-z0-9-]+/?$', path, re.I):
+                return False
+
+        if domain == "adultfilmdatabase.com":
+            # ex: /actor/abigail-mac-63393
+            if not re.search(r'^/actor/[a-z0-9][a-z0-9-]+-\d+/?$', path, re.I):
+                return False
 
         # Rejeter pages génériques sans profil
         if domain == "boobpedia.com" and "/main_page" in path:
@@ -671,7 +791,7 @@ class URLOptimizer:
                 "domain": domain
             }
 
-            if any(domain == d or domain.endswith(f".{d}") for d in self.SOCIAL_DOMAINS):
+            if any(self._domain_matches(domain, d) for d in self.SOCIAL_DOMAINS):
                 social_candidates.append(item)
             else:
                 profile_candidates.append(item)
@@ -691,9 +811,8 @@ class URLOptimizer:
         profile_unique = keep_one_per_domain(profile_candidates)
         social_unique = keep_one_per_domain(social_candidates)
 
-        # Tri alphabétique demandé, avec groupe profils puis groupe réseaux sociaux
-        profile_unique.sort(key=lambda x: x['url'].lower())
-        social_unique.sort(key=lambda x: x['url'].lower())
-
+        # Tri global demandé : les URLs (plafonnées) en ordre alphabétique.
+        # (Le filtrage "profil-only" et la déduplication/1 par domaine restent appliqués.)
         final_items = profile_unique + social_unique
+        final_items.sort(key=lambda x: x['url'].lower())
         return [item['url'] for item in final_items[:limit]]

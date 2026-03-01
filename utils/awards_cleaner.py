@@ -14,6 +14,14 @@ class AwardsCleaner:
         """Nettoie le texte brut des awards pour avoir un format lisible"""
         if not raw_awards:
             return ""
+
+        # Utiliser le nettoyeur robuste partagé (fallback regex quand Gemini est off)
+        try:
+            from utils.normalizer import clean_awards_field
+            return clean_awards_field(raw_awards)
+        except Exception:
+            # Fallback vers l'ancien comportement si import impossible
+            pass
         
         # Pattern pour détecter les types d'awards
         award_types = ['AVN AWARDS', 'XBIZ AWARDS', 'NIGHTMOVES', 'XRCO AWARDS', 'TEASE AWARDS', 'VENUS AWARDS']
