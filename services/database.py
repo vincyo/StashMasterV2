@@ -149,7 +149,21 @@ class StashDatabase:
             # Fallback: certains setups utilisent la colonne 'disambiguation' comme lieu de naissance
             if not data.get('birthplace') and data.get('disambiguation'):
                 data['birthplace'] = data.get('disambiguation')
-            
+
+            # --- Nettoyage des dates ---
+            # Stash stocke les dates NULL comme "0001-01-01" — on les efface
+            NULL_DATES = {'0001-01-01', '0001-01-01T00:00:00Z', '0001-01-01 00:00:00+00:00', ''}
+            for date_col in ('birthdate', 'death_date'):
+                raw = str(data.get(date_col, '') or '').strip()
+                if raw in NULL_DATES:
+                    data[date_col] = ''
+                elif 'T' in raw:
+                    # Tronquer "1988-06-02T00:00:00Z" → "1988-06-02"
+                    data[date_col] = raw.split('T')[0]
+
+            # Mapper death_date → deathdate (clé utilisée dans le UI field_vars)
+            data['deathdate'] = data.get('death_date', '')
+
             return data
         except Exception as e:
             print(f"Erreur lors de la lecture DB: {e}")

@@ -489,8 +489,8 @@ Retourne UNIQUEMENT la liste nettoyée, une ligne par award, sans explication.""
         piercings    = metadata.get('piercings')    or ''
         trivia       = metadata.get('trivia')       or ''
         awards_raw   = metadata.get('awards') or metadata.get('awards_summary') or ''
-        bio_raw      = metadata.get('bio_raw') or metadata.get('details', '')
-        stash_bio    = metadata.get('stash_bio', '')  # Bio déjà présente dans Stash
+        bio_raw      = metadata.get('bio_raw') or ''  # Uniquement bio scrappée — pas la bio Stash
+        stash_bio    = metadata.get('stash_bio', '')  # Bio Stash — réservée à Raffiner, pas injectée dans Gemini
 
         interviews_ctx = metadata.get('interviews') or ''
         if not interviews_ctx:
@@ -547,7 +547,7 @@ Retourne UNIQUEMENT la liste nettoyée, une ligne par award, sans explication.""
         trivia_prose     = self._prose_trivia(trivia)
         appearance_prose = self._prose_appearance(
             measurements, height, weight, hair_color, ethnicity, tattoos, piercings)
-        career_enrich    = self._prose_bio_raw(bio_raw or stash_bio, performer_name)
+        career_enrich    = self._prose_bio_raw(bio_raw, performer_name)  # N'utilise PAS stash_bio
         bd  = birthdate    or '[date de naissance]'
         bp  = birthplace   or '[lieu]'
         cs  = career_start or '[année de début]'
@@ -630,9 +630,10 @@ Retourne UNIQUEMENT la liste nettoyée, une ligne par award, sans explication.""
             extra_context = ""
             if metadata.get('trivia'):
                 extra_context += f"\nFaits marquants (Trivia) :\n{metadata['trivia']}"
-            bio_source = metadata.get('bio_raw') or metadata.get('details', '')
+            bio_source = metadata.get('bio_raw') or ''
             if bio_source:
-                extra_context += f"\nBio source scrappée :\n{bio_source}"
+                # Limité à 2000 chars pour éviter les timeouts Ollama
+                extra_context += f"\nBio source scrappée :\n{bio_source[:2000]}"
             if metadata.get('awards'):
                 extra_context += f"\nRécompenses (brut) :\n{metadata['awards']}"
 

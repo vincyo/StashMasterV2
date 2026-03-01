@@ -1755,7 +1755,24 @@ class PerformerFrame(ttk.Frame):
         saved = self._save_to_stash_internal(show_messages=False, reload_after_save=False)
         save_status = "✅ sauvegardé dans Stash" if saved else "⚠️ sauvegarde automatique échouée — cliquez 💾 pour réessayer"
 
-        messagebox.showinfo("Scraping", f"Scraping terminé ({len(results)} sources). {len(all_discovered)} URLs agrégées.\n{save_status}")
+        # --- Résumé Debug : affichage console + popup ---
+        print("\n" + "="*60)
+        print(f"[SCRAPE RÉSUMÉ] {len(results)} source(s)")
+        skip_keys = {'source', 'url', 'socials', 'discovered_urls'}
+        detail_lines = []
+        for r in results:
+            sname = r.get('source', '?')
+            found = {k: v for k, v in r.items() if k not in skip_keys and v}
+            non_empty = {k: v for k, v in found.items() if str(v).strip()}
+            print(f"  [{sname}] ({r.get('url','')[:60]})")
+            for k, v in non_empty.items():
+                preview = str(v)[:80].replace('\n', ' ')
+                print(f"    {k}: {preview}")
+            detail_lines.append(f"{sname}: {', '.join(non_empty.keys()) if non_empty else '(aucun champ)'}")
+        print("="*60 + "\n")
+
+        debug_summary = "\n".join(detail_lines)
+        messagebox.showinfo("Scraping", f"Scraping terminé ({len(results)} sources). {len(all_discovered)} URLs agrégées.\n{save_status}\n\n━━ Champs extraits ━━\n{debug_summary}")
 
     def _sort_urls(self, urls: List[str]) -> List[str]:
         """Trie les URLs : sources recherchées d'abord (IAFD, FreeOnes, etc.)"""
